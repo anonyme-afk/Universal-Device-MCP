@@ -84,6 +84,20 @@ class DeviceMemoryTests(unittest.TestCase):
         self.assertFalse(refreshed["configuration_changed"])
         self.assertEqual(1, len(self.memory.get_knowledge("adb-phone")["snapshots"]))
 
+    def test_ios_unlocking_and_trusting_host_does_not_look_like_hardware_reconfiguration(self):
+        locked = Device("ios-phone", "ios", "Apple USB device", "ios:udid-1",
+                        identity={"serial": "udid-1", "state": "usb_detected"},
+                        hardware={"vendor_id": "0x05ac", "product_id": "0x12a8"},
+                        interfaces=[{"id": "usb-descriptors"}])
+        self.memory.save_device(locked)
+        trusted = Device("ios-phone", "ios", "iPhone", "ios:udid-1",
+                         identity={"udid": "udid-1", "state": "connected"},
+                         hardware={"vendor_id": "0x05ac", "product_id": "0x12a8"},
+                         interfaces=[{"id": "lockdown"}, {"id": "ios-cli"}])
+        refreshed = self.memory.save_device(trusted)
+        self.assertFalse(refreshed["configuration_changed"])
+        self.assertEqual(1, len(self.memory.get_knowledge("ios-phone")["snapshots"]))
+
 
 if __name__ == "__main__":
     unittest.main()

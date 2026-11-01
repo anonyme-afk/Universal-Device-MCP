@@ -4,8 +4,8 @@ import asyncio
 import hashlib
 from typing import Any
 
-from .base import Adapter
 from ..models import Device
+from .base import Adapter
 
 
 class BluetoothAdapter(Adapter):

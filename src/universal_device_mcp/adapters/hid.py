@@ -6,8 +6,8 @@ import hashlib
 import threading
 from typing import Any
 
-from .base import Adapter
 from ..models import Device
+from .base import Adapter
 
 
 class HIDAdapter(Adapter):
@@ -49,7 +49,7 @@ class HIDAdapter(Adapter):
                 self._open_paths.discard(path_hex)
 
     def discover(self) -> list[Device]:
-        self._hid()
+        hid = self._hid()
         devices: list[Device] = []
         for item in hid.enumerate():
             path = item.get("path")
@@ -83,7 +83,7 @@ class HIDAdapter(Adapter):
             return {"identity": device.identity, "hardware": device.hardware}
         if operation not in {"read", "receive", "write", "send"}:
             raise ValueError("HID operation must be inspect, read, receive, write or send")
-        hid = self._hid()
+        self._hid()
         length = int(options.get("length", 64))
         timeout_ms = int(options.get("timeout_ms", 1000))
         if not 1 <= length <= 65_536:

@@ -41,6 +41,14 @@ def _stable_configuration(value: Any) -> Any:
             if isinstance(result.get("identity"), dict):
                 result["identity"].pop("state", None)
             result["interfaces"] = [{"id": "shell", "kind": "adb-shell"}]
+        elif result.get("transport") == "ios":
+            # Lockdown access and service visibility change when the owner unlocks
+            # and trusts the host; they are not physical hardware reconfigurations.
+            identity = result.get("identity")
+            if isinstance(identity, dict):
+                identifier = identity.get("udid") or identity.get("serial")
+                result["identity"] = {"identifier": identifier} if identifier else {}
+            result["interfaces"] = []
         return result
     if isinstance(value, list):
         return [_stable_configuration(item) for item in value]

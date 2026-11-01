@@ -6,8 +6,8 @@ import shutil
 import subprocess
 from typing import Any
 
-from .base import Adapter
 from ..models import Device
+from .base import Adapter
 
 
 class ADBAdapter(Adapter):

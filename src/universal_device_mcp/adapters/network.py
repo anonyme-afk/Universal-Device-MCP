@@ -7,8 +7,8 @@ import socket
 import threading
 from typing import Any
 
-from .base import Adapter
 from ..models import Device
+from .base import Adapter
 
 
 class _ServiceTypeListener:

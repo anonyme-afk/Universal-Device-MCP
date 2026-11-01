@@ -18,13 +18,14 @@
 - mDNS/DNS-SD discovery of advertised local TCP and UDP services with generic stream/datagram communication.
 - Android device discovery, property inspection and generic ADB shell argv execution.
 - Android Wireless Debugging discovery, pairing-code pairing and TLS ADB connection through advertised mDNS services.
+- iPhone/iPad USB discovery through Apple usbmux, best-effort USB descriptor detection when lockdown access is unavailable, iOS device-info inspection, paired-device Bonjour discovery, and generic `pymobiledevice3` CLI execution pinned to the selected device.
 - Local SQLite device profiles, persistent discoveries and a recent-history view over the complete communication log.
 - Automatic USB, HID, serial and ADB connection monitoring with a persistent event feed; BLE scanning remains on demand because it is slower and platform-sensitive.
 - Configuration snapshots that preserve previous hardware/interface layouts when an observed configuration changes.
 - Optional user-authored operation restrictions, with no restrictions imposed by default.
 - Extensible Python adapter interface, with optional transport dependencies loaded only when needed.
 
-Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, documentation search, and a graphical interface are extension points for later releases. ADB shell is limited by Android's own shell permissions. iOS device access is not provided by these adapters.
+Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, documentation search, and a graphical interface are extension points for later releases. ADB shell is limited by Android's own shell permissions. iOS does not expose a general-purpose shell; available services are those allowed by the device's iOS version, pairing/trust state and installed host support.
 
 ## Requirements
 
@@ -40,6 +41,7 @@ Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, doc
 | Bluetooth LE | `pip install "universal-device-mcp[bluetooth]"` | Bluetooth adapter and OS permissions/services. |
 | Local network | `pip install "universal-device-mcp[network]"` | Devices must advertise mDNS/DNS-SD TCP or UDP services; arbitrary IP ranges are not scanned. |
 | Android | No Python extra | Android Platform Tools (`adb`) on `PATH`; USB debugging authorized on the phone. |
+| iPhone/iPad | `pip install "universal-device-mcp[ios]"` | Uses `pymobiledevice3`. On Windows install the classic iTunes package for Apple Mobile Device Support; on Linux install and run `usbmuxd`; macOS uses the system usbmux service. Unlock the device and accept **Trust This Computer** for lockdown services. |
 
 ## Install
 
@@ -53,7 +55,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[all]"
 ```
 
-The base install includes the official MCP SDK selected for your Python version. The `[all]` extra adds all hardware adapters. Install only the transports you need with `[usb]`, `[hid]`, `[serial]`, `[bluetooth]`, or `[network]`. Python 3.10 uses the SDK v1 maintenance line; Python 3.11+ uses the current SDK v2 line. For Android-only use, install the base package and Android Platform Tools separately.
+The base install includes the official MCP SDK selected for your Python version. The `[all]` extra adds the USB, HID, serial, BLE, network and iOS adapters. Install only the transports you need with `[usb]`, `[hid]`, `[serial]`, `[bluetooth]`, `[network]` or `[ios]`. Python 3.10 uses the SDK v1 maintenance line; Python 3.11+ uses the current SDK v2 line. For Android-only use, install the base package and Android Platform Tools separately.
 
 Start the server directly:
 
@@ -91,14 +93,14 @@ On macOS/Linux, set `command` to the installed executable or the venv Python and
 | --- | --- |
 | `get_runtime_status()` | Check installed transports and host prerequisites without starting a hardware scan. |
 | `discover_devices(transports?)` | Scan selected or all installed transports; each adapter reports its own errors. |
-| `discover_wireless_devices()` | Scan BLE, local mDNS TCP/UDP services and wireless ADB pairing/connect services. |
+| `discover_wireless_devices()` | Scan BLE, local mDNS TCP/UDP services, wireless ADB services and paired iOS Bonjour services. |
 | `pair_android_over_wifi(endpoint, pairing_code)` / `connect_android_over_wifi(endpoint)` | Pair and connect only to endpoints currently advertised by ADB mDNS. |
 | `list_known_devices()` | List locally remembered profiles. |
 | `start_device_monitor(interval_seconds?)` / `stop_device_monitor()` | Start or stop background USB, HID, serial and ADB monitoring. Monitoring starts automatically by default. |
 | `get_device_events(after_id?, limit?)` | Read persistent connect/disconnect events after a cursor. |
 | `inspect_device(device_id)` | Return stored identity/interfaces and query transport-specific details. |
 | `open_interface(device_id, interface_id, options?)` / `close_interface(session_id)` | Open or release a persistent USB, HID, serial, TCP or UDP interface session. |
-| `communicate(device_id, interface_id, operation, data_hex?, session_id?, options?)` | Generic low-level transport I/O. Bytes use hexadecimal strings; an open session can be reused. |
+| `communicate(device_id, interface_id, operation, data_hex?, session_id?, options?)` | Generic low-level transport I/O; iOS commands use an argv array and are pinned to the selected UDID. Bytes use hexadecimal strings; an open session can be reused where supported. |
 | `analyze_payload(data_hex, baseline_hex?)` | Decode common byte views and compare samples; outputs are hypotheses, not protocol identification. |
 | `remember_discovery(device_id, category, content, confidence?, source?)` | Append an explicit hypothesis or confirmed finding. |
 | `update_device_profile(device_id, updates)` | Edit saved name and metadata; the physical fingerprint and transport stay fixed. |
@@ -116,6 +118,12 @@ First call `discover_devices`, then use the returned `device_id` and `interface_
 For cable-free Android access, enable **Developer options → Wireless debugging** on the phone and put it on the same Wi-Fi network as the computer. Call `discover_wireless_devices`; when the phone shows a pairing service, pass its exact endpoint and the six-digit code shown on the phone to `pair_android_over_wifi`. Then discover again and call `connect_android_over_wifi` with the advertised TLS connect endpoint. The device must authorize the workstation; afterward it appears in ordinary ADB discovery and supports the same inspection and shell tools as a USB-connected phone. The server does not scan arbitrary IP addresses. Android's official ADB guidance requires pairing and mDNS discovery on the same network: [Wireless debugging requirements](https://developer.android.com/tools/adb).
 
 BLE devices can also be discovered with `discover_wireless_devices` or `discover_devices(transports=["bluetooth"])`. Use `inspect_device` to enumerate GATT services and characteristics, then `communicate` with the characteristic UUID as the interface. This supports BLE GATT; Bluetooth Classic profiles require a separate adapter.
+
+### iPhone and iPad
+
+Install the `[ios]` extra and the host components listed above, then connect the device by USB. `discover_devices(transports=["ios"])` uses `pymobiledevice3 usbmux list` to find iOS devices. If usbmux cannot provide lockdown access, the adapter also attempts a read-only Apple USB descriptor scan through PyUSB; this can identify an attached Apple device while locked, but only basic descriptors are available and USB Restricted Mode, the host driver, or the OS may prevent even that. It never bypasses the device passcode or trust prompt.
+
+After unlocking the device and approving **Trust This Computer**, call `inspect_device` for lockdown information. `discover_wireless_devices` also lists Apple mobdev2 Bonjour advertisements when this computer already has the required pairing record. To use another documented `pymobiledevice3` operation, call `communicate` with `interface_id="ios-cli"`, `operation="execute"`, and `options={"argv": ["apps", "list"]}`. The server launches the installed CLI without a shell and fixes the target UDID. These commands can modify device state; use the specific operation the owner requested. iOS does not provide an Android-style arbitrary shell, and some developer services on iOS 17+ require a developer tunnel and Developer Mode.
 
 Serial write: `operation="write"`, `data_hex="48454c500a"`, options such as `{"baudrate": 115200}`. Serial read: `operation="read"`, options `{"baudrate": 115200, "length": 128}`. Serial sessions also accept `bytesize`, `parity`, `stopbits`, `xonxoff`, `rtscts`, and `dsrdtr` where the OS driver supports them.
 
@@ -184,13 +192,14 @@ my_transport = "my_package.adapter:MyAdapter"
 - **HID errors:** install the `hid` extra and check that the OS permits access to the selected report interface.
 - **BLE errors:** ensure Bluetooth is enabled and grant application permission in the OS. BLE availability differs by OS and adapter.
 - **No local network services:** install the `network` extra; only mDNS/DNS-SD-advertised TCP/UDP services are found.
+- **iPhone/iPad is missing:** install the `[ios]` extra. Windows requires Apple's Mobile Device Support (provided by the classic iTunes installer); Linux requires a running `usbmuxd`; macOS uses its system service. Unlock the device and accept **Trust This Computer** for detailed lockdown access. Before that, only usbmux discovery or best-effort USB descriptors may be available, subject to the OS, cable, USB permissions and backend.
 - **ADB shows unauthorized/offline:** the device remains visible in discovery with its state, but no shell interface is exposed until it reaches the authorized `device` state. Unlock the phone and accept its USB debugging prompt.
 - **MCP server will not start:** verify the client launches the same Python environment where the `mcp` package is installed; inspect the MCP client's stderr/logs.
 - **Profile database location:** set `UDMCP_DATABASE` to an absolute writable file path.
 
 ## Roadmap
 
-Structured USB HID report-descriptor parsing, discovery of non-advertising network devices, Bluetooth Classic, camera/microphone OS APIs, iOS, protocol/documentation knowledge sources, GUI, and richer import workflows remain planned. Automatic proprietary protocol discovery is inherently uncertain and is not claimed as a completed feature.
+Structured USB HID report-descriptor parsing, discovery of non-advertising network devices, Bluetooth Classic, camera/microphone OS APIs, broader protocol/documentation knowledge sources, GUI, and richer import workflows remain planned. Automatic proprietary protocol discovery is inherently uncertain and is not claimed as a completed feature.
 
 ## License
 

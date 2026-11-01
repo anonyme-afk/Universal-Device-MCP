@@ -21,8 +21,10 @@ serial = ["pyserial>=3.5"]
 bluetooth = ["bleak>=0.22"]
 network = ["zeroconf>=0.132"]
 hid = ["hidapi>=0.14"]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
-all = ["pyusb>=1.2", "pyserial>=3.5", "bleak>=0.22", "zeroconf>=0.132", "hidapi>=0.14"]
+ios = ["pymobiledevice3>=4.0", "pyusb>=1.2"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
+all = ["pyusb>=1.2", "pyserial>=3.5", "bleak>=0.22", "zeroconf>=0.132", "hidapi>=0.14",
+       "pymobiledevice3>=4.0"]
 
 [project.scripts]
 universal-device-mcp = "universal_device_mcp.server:main"
@@ -33,4 +35,10 @@ packages = ["src/universal_device_mcp"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 

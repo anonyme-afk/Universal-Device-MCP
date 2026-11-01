@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-from collections import Counter
 import threading
+from collections import Counter
 from typing import Any
 
-from .base import Adapter
 from ..models import Device
+from .base import Adapter
 
 
 class USBAdapter(Adapter):

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 import logging
 import os
 import shutil
@@ -13,10 +13,18 @@ import uuid
 from contextlib import nullcontext
 from typing import Any
 
-from .adapters import ADBAdapter, BluetoothAdapter, HIDAdapter, NetworkAdapter, SerialAdapter, USBAdapter
+from .adapters import (
+    ADBAdapter,
+    BluetoothAdapter,
+    HIDAdapter,
+    IOSAdapter,
+    NetworkAdapter,
+    SerialAdapter,
+    USBAdapter,
+)
 from .adapters.base import Adapter
+from .mcp_runtime import USING_OFFICIAL_SDK, FastMCP
 from .memory import DeviceMemory
-from .mcp_runtime import FastMCP, USING_OFFICIAL_SDK
 from .models import Device
 from .payload_analysis import analyze_payload as analyze_bytes
 
@@ -49,7 +57,8 @@ class DeviceService:
     def __init__(self, memory: DeviceMemory | None = None, adapters: list[Adapter] | None = None) -> None:
         self.memory = memory or DeviceMemory(os.environ.get("UDMCP_DATABASE"))
         self.adapters = adapters if adapters is not None else [
-            USBAdapter(), HIDAdapter(), SerialAdapter(), BluetoothAdapter(), ADBAdapter(), NetworkAdapter()
+            USBAdapter(), HIDAdapter(), SerialAdapter(), BluetoothAdapter(), ADBAdapter(),
+            NetworkAdapter(), IOSAdapter()
         ]
         plugins, self.plugin_errors = _load_plugin_adapters() if adapters is None else ([], [])
         self.adapters.extend(plugins)
@@ -77,6 +86,12 @@ class DeviceService:
             result["wireless_adb_services"] = adb_adapter.discover_wireless_services()
         except Exception as exc:
             result["errors"].append({"transport": "adb-wireless", "error": str(exc)})
+        ios_adapter = next((adapter for adapter in self.adapters if adapter.transport == "ios"), None)
+        if ios_adapter is not None:
+            try:
+                result["wireless_ios_services"] = ios_adapter.discover_wireless_services()
+            except Exception as exc:
+                result["errors"].append({"transport": "ios-wireless", "error": str(exc)})
         return result
 
     def _adb_adapter(self) -> Any:
@@ -154,7 +169,7 @@ class DeviceService:
             def run() -> None:
                 while not self._monitor_stop.is_set():
                     try:
-                        self.discover(["usb", "hid", "serial", "adb"])
+                        self.discover(["usb", "hid", "serial", "adb", "ios"])
                     except Exception:
                         logger.exception("Device monitor scan failed")
                     self._monitor_stop.wait(interval_seconds)
@@ -162,7 +177,7 @@ class DeviceService:
             self._monitor_thread = threading.Thread(target=run, name="udmcp-device-monitor", daemon=True)
             self._monitor_thread.start()
             return {"running": True, "interval_seconds": interval_seconds,
-                    "transports": ["usb", "hid", "serial", "adb"]}
+                    "transports": ["usb", "hid", "serial", "adb", "ios"]}
 
     def stop_monitor(self) -> dict[str, Any]:
         with self._monitor_control_lock:
@@ -385,9 +400,9 @@ def _tool_annotations(*, read_only: bool, destructive: bool, idempotent: bool,
 
 @mcp.tool()
 def discover_devices(transports: list[str] | None = None) -> dict[str, Any]:
-    """Discover connected devices using available USB, serial, BLE and Android ADB adapters.
+    """Discover connected devices using available USB, serial, BLE, Android ADB and iOS adapters.
 
-    Optionally restrict transports to usb, hid, serial, bluetooth, adb or network. Optional adapter
+    Optionally restrict transports to usb, hid, serial, bluetooth, adb, ios or network. Optional adapter
     dependencies and OS access errors are reported per transport without stopping other scans.
     """
     return _json(service.discover(transports))
@@ -398,15 +413,24 @@ def discover_devices(transports: list[str] | None = None) -> dict[str, Any]:
 def get_runtime_status() -> dict[str, Any]:
     """Report runtime, adapter, optional-library and host-tool availability without scanning hardware."""
     modules = {"usb": "usb", "hid": "hid", "serial": "serial", "bluetooth": "bleak",
-               "network": "zeroconf"}
+               "network": "zeroconf", "ios": "pymobiledevice3"}
     adapters = []
     for adapter in service.adapters:
         dependency = modules.get(adapter.transport)
         available = bool(importlib.util.find_spec(dependency)) if dependency else True
+        capabilities = None
         if adapter.transport == "adb":
             available = shutil.which("adb") is not None
+        if adapter.transport == "ios":
+            cli_available = (shutil.which("pymobiledevice3") is not None
+                             or bool(importlib.util.find_spec("pymobiledevice3")))
+            usb_available = bool(importlib.util.find_spec("usb"))
+            available = cli_available or usb_available
+            capabilities = {"pymobiledevice3_cli": cli_available,
+                            "usb_descriptor_fallback": usb_available}
         adapters.append({"transport": adapter.transport, "available": available,
                          "dependency": dependency,
+                         **({"capabilities": capabilities} if capabilities is not None else {}),
                          "adapter": type(adapter).__name__})
     return _json({"python": sys.version.split()[0], "platform": sys.platform,
                   "mcp_runtime": "official SDK" if USING_OFFICIAL_SDK else "stdio fallback",
@@ -417,7 +441,7 @@ def get_runtime_status() -> dict[str, Any]:
 
 @mcp.tool()
 def discover_wireless_devices() -> dict[str, Any]:
-    """Discover BLE devices, mDNS-advertised local TCP/UDP services and wireless ADB services."""
+    """Discover BLE/local mDNS services, wireless Android ADB and paired iOS mobdev2 services."""
     return _json(service.discover_wireless())
 
 
@@ -488,7 +512,9 @@ def communicate(device_id: str, interface_id: str, operation: str,
     Serial supports read/write/send/receive. USB supports read/write plus control_read and
     control_write; endpoints, lengths and USB control setup fields belong in options.
     BLE supports read/write using a characteristic UUID. ADB supports execute with argv in
-    options. Pass session_id from open_interface to reuse a persistent session. Transport
+    options. iOS supports lockdown inspection and pymobiledevice3 commands through argv, with
+    the selected UDID pinned by the adapter and no shell. Pass session_id from open_interface
+    to reuse a persistent session. Transport
     access may change device state; target and payload must be deliberate.
     """
     return _json(service.communicate(device_id, interface_id, operation, data_hex,
