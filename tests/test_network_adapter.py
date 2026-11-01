@@ -24,8 +24,9 @@ class NetworkAdapterTests(unittest.TestCase):
         device = Device("network-udp-test", "network", "local UDP service", "mdns:udp-test",
                         identity={"protocol": "udp", "host": "127.0.0.1", "port": port})
         adapter = NetworkAdapter()
-        session = adapter.open_interface(device, "udp")
-        response = adapter.communicate(device, "udp", "communicate", b"hello", _session=session)
+        session = adapter.open_interface(device, "udp", timeout=10.0)
+        response = adapter.communicate(device, "udp", "communicate", b"hello", _session=session,
+                                       timeout=10.0)
         adapter.close_interface(device, "udp", session)
         server.join(timeout=2)
         self.assertEqual([b"hello"], received)
@@ -53,9 +54,10 @@ class NetworkAdapterTests(unittest.TestCase):
         device = Device("network-test", "network", "local test service", "mdns:test",
                         identity={"protocol": "tcp", "host": "127.0.0.1", "port": port})
         adapter = NetworkAdapter()
-        session = adapter.open_interface(device, "tcp")
-        adapter.communicate(device, "tcp", "send", b"hello", _session=session)
-        response = adapter.communicate(device, "tcp", "communicate", b"again", _session=session)
+        session = adapter.open_interface(device, "tcp", timeout=10.0)
+        adapter.communicate(device, "tcp", "send", b"hello", _session=session, timeout=10.0)
+        response = adapter.communicate(device, "tcp", "communicate", b"again", _session=session,
+                                       timeout=10.0)
         adapter.close_interface(device, "tcp", session)
         server.join(timeout=2)
         self.assertEqual([b"helloagain"], received)
