@@ -48,19 +48,64 @@ Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, doc
 
 ## Install
 
-### Quick install with uv
+### Quick setup for Claude Desktop, Cursor or VS Code
 
-Install and launch the published package (after a PyPI release):
+You do not need to clone the repository, create a Python environment, or know Python. Install `uv` once using its [official installer](https://docs.astral.sh/uv/getting-started/installation/). `uv` downloads the required Python version and the MCP dependencies when the server first starts.
+
+In Claude Desktop, open **Settings → Developer → Edit Config**. In Cursor, open **Settings → MCP → Add Server**. Paste the `mcpServers` entry below into the configuration file (keep any other servers already there), save it, and restart the app:
+
+```json
+{
+  "mcpServers": {
+    "universal-device": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "universal-device-mcp[all] @ https://github.com/anonyme-afk/Universal-Device-MCP/archive/refs/heads/main.zip#subdirectory=Universal-Device-MCP-main",
+        "universal-device-mcp"
+      ]
+    }
+  }
+}
+```
+
+The archive URL avoids requiring Git. The first start can take a few minutes while `uv` downloads and installs dependencies; later starts reuse them. For VS Code, use **MCP: Add Server** from the Command Palette and choose **stdio**, or save this in `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "universal-device": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "universal-device-mcp[all] @ https://github.com/anonyme-afk/Universal-Device-MCP/archive/refs/heads/main.zip#subdirectory=Universal-Device-MCP-main",
+        "universal-device-mcp"
+      ]
+    }
+  }
+}
+```
+
+See the official [VS Code MCP setup](https://code.visualstudio.com/docs/agents/reference/mcp-configuration), [Cursor MCP guide](https://docs.cursor.com/context/model-context-protocol), and [Claude Desktop local MCP guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) for where each app stores its configuration.
+
+To try the server without hardware, add `"env": { "UDMCP_ENABLE_SIMULATOR": "true" }` inside the server entry, restart the client, then ask the agent to discover the simulator. Remove that line when you are done; simulator entries are virtual devices.
+
+### Run the published package
+
+After a PyPI release, install and launch it with:
 
 ```bash
 uvx --from "universal-device-mcp[all]" universal-device-mcp
 ```
 
-Until the first PyPI release is published, install the GitHub source directly:
+Until a PyPI release is available, start directly from the GitHub source without installing Git:
 
 ```bash
-uvx --from "universal-device-mcp[all] @ git+https://github.com/anonyme-afk/Universal-Device-MCP.git" universal-device-mcp
+uvx --from "universal-device-mcp[all] @ https://github.com/anonyme-afk/Universal-Device-MCP/archive/refs/heads/main.zip#subdirectory=Universal-Device-MCP-main" universal-device-mcp
 ```
+
+For a developer checkout, use:
 
 ### Install from a checkout
 
@@ -93,7 +138,11 @@ Example for a client that accepts a local stdio server configuration (replace pa
   "mcpServers": {
     "universal-device": {
       "command": "uvx",
-      "args": ["--from", "universal-device-mcp[all]", "universal-device-mcp"],
+      "args": [
+        "--from",
+        "universal-device-mcp[all] @ https://github.com/anonyme-afk/Universal-Device-MCP/archive/refs/heads/main.zip#subdirectory=Universal-Device-MCP-main",
+        "universal-device-mcp"
+      ],
       "env": {
         "UDMCP_DATABASE": "C:/Users/you/AppData/Local/UniversalDeviceMCP/devices.sqlite3",
         "UDMCP_POLICY": "C:/Users/you/.config/udmcp/policy.json"

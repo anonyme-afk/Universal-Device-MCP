@@ -11,7 +11,8 @@ class IOSAdapterTests(unittest.TestCase):
     def test_discovers_paired_device_from_usbmux_json(self):
         result = SimpleNamespace(returncode=0, stdout='["00008020-001234567890001E"]', stderr="")
         with patch("universal_device_mcp.adapters.ios.shutil.which", return_value="pymobiledevice3"), \
-             patch("universal_device_mcp.adapters.ios.subprocess.run", return_value=result) as run:
+             patch("universal_device_mcp.adapters.ios.subprocess.run", return_value=result) as run, \
+             patch.object(IOSAdapter, "_discover_usb_descriptors", return_value=[]):
             devices = IOSAdapter().discover()
         self.assertEqual(1, len(devices))
         self.assertEqual("ios", devices[0].transport)

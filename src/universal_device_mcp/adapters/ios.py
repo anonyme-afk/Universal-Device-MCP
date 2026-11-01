@@ -94,37 +94,43 @@ class IOSAdapter(Adapter):
         # device before lockdown pairing is possible. It cannot unlock or bypass
         # Apple's trust/USB Restricted Mode protections.
         try:
-            import usb.core
-            import usb.util
-
-            for raw in usb.core.find(find_all=True, idVendor=0x05AC) or []:
-                serial = self._usb_string(raw, "serial_number")
-                bus = getattr(raw, "bus", None)
-                address = getattr(raw, "address", None)
-                location = getattr(raw, "port_numbers", None) or f"address-{address}"
-                fingerprint = f"ios:{serial}" if serial else f"ios-usb:{bus}:{location}"
-                if any(device.fingerprint == f"ios:{serial}" for device in devices):
-                    continue
-                vid, pid = int(raw.idVendor), int(raw.idProduct)
-                stable_id = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
-                interfaces: list[dict[str, Any]] = [{
-                    "id": "usb-descriptors", "kind": "ios-usb-device",
-                    "description": "Basic USB descriptors only; lockdown services may require unlock and trust"}]
-                devices.append(Device(
-                    device_id=f"ios-usb-{stable_id}", transport=self.transport,
-                    name=self._usb_string(raw, "product") or f"Apple USB device {vid:04x}:{pid:04x}",
-                    fingerprint=fingerprint,
-                    identity={"serial": serial, "state": "usb_detected", "bus": bus,
-                              "address": address, "fingerprint_basis": "usb_serial_or_port"},
-                    hardware={"vendor_id": f"0x{vid:04x}", "product_id": f"0x{pid:04x}",
-                              "manufacturer": self._usb_string(raw, "manufacturer")},
-                    interfaces=interfaces))
+            devices.extend(self._discover_usb_descriptors(devices))
         except Exception as exc:
             if not devices and not cli_succeeded:
                 errors.append(str(exc))
         if not devices and errors:
             raise RuntimeError("; ".join(dict.fromkeys(errors)))
         return devices
+
+    def _discover_usb_descriptors(self, paired_devices: list[Device]) -> list[Device]:
+        """Return visible Apple USB descriptors without depending on lockdown access."""
+        import usb.core
+
+        found: list[Device] = []
+        paired_fingerprints = {device.fingerprint for device in paired_devices}
+        for raw in usb.core.find(find_all=True, idVendor=0x05AC) or []:
+            serial = self._usb_string(raw, "serial_number")
+            bus = getattr(raw, "bus", None)
+            address = getattr(raw, "address", None)
+            location = getattr(raw, "port_numbers", None) or f"address-{address}"
+            fingerprint = f"ios:{serial}" if serial else f"ios-usb:{bus}:{location}"
+            if fingerprint in paired_fingerprints:
+                continue
+            vid, pid = int(raw.idVendor), int(raw.idProduct)
+            stable_id = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
+            interface = {
+                "id": "usb-descriptors", "kind": "ios-usb-device",
+                "description": "Basic USB descriptors only; lockdown services may require unlock and trust"}
+            found.append(Device(
+                device_id=f"ios-usb-{stable_id}", transport=self.transport,
+                name=self._usb_string(raw, "product") or f"Apple USB device {vid:04x}:{pid:04x}",
+                fingerprint=fingerprint,
+                identity={"serial": serial, "state": "usb_detected", "bus": bus,
+                          "address": address, "fingerprint_basis": "usb_serial_or_port"},
+                hardware={"vendor_id": f"0x{vid:04x}", "product_id": f"0x{pid:04x}",
+                          "manufacturer": self._usb_string(raw, "manufacturer")},
+                interfaces=[interface]))
+        return found
 
     def discover_wireless_services(self) -> list[dict[str, Any]]:
         """Discover Apple mobdev2 Bonjour services for hosts that already paired."""
