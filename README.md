@@ -21,6 +21,7 @@
 - iPhone/iPad USB discovery through Apple usbmux, best-effort USB descriptor detection when lockdown access is unavailable, iOS device-info inspection, paired-device Bonjour discovery, and generic `pymobiledevice3` CLI execution pinned to the selected device.
 - Local SQLite device profiles, persistent discoveries and configurable, minimized communication history.
 - Concurrent adapter discovery and `communicate_many` for independent concurrent reads across explicitly named device/interface targets. Every target has a separate result; batch writes are rejected.
+- Persistent selector-based device groups, concurrent per-member reads, and bounded group-write plans that require exact local allow rules plus MCP client elicitation before one-time execution.
 - Optional ten-device simulator for installation checks and repeatable multi-device demonstrations.
 - Background device monitoring is off by default and can be started explicitly.
 - Configuration snapshots that preserve previous hardware/interface layouts when an observed configuration changes.
@@ -118,16 +119,20 @@ The same `uvx` configuration works on macOS and Linux when `uv` is on `PATH`. Fo
 | `inspect_device(device_id)` | Return stored identity/interfaces and query transport-specific details. |
 | `open_interface(device_id, interface_id, options?)` / `close_interface(session_id)` | Open or release a persistent USB, HID, serial, TCP or UDP interface session. |
 | `communicate(device_id, interface_id, operation, data_hex?, session_id?, options?)` | Generic low-level transport I/O; iOS commands use an argv array and are pinned to the selected UDID. Bytes use hexadecimal strings; an open session can be reused where supported. |
-| `communicate_many(targets, operation="read")` | Concurrent read/receive on up to 32 exact device/interface pairs (bounded to 16 active reads); results and failures stay separate per target. Batch writes are not exposed. |
+| `communicate_many(targets, operation="read")` | Concurrent read/receive on up to 32 exact device/interface pairs (bounded to 16 active reads); results and failures stay separate per target. |
+| `create_device_group(name, selector)` / `list_device_groups()` / `inspect_device_group(group_id)` / `delete_device_group(group_id)` | Save and inspect selector-based groups while preserving each device's own identity. |
+| `read_device_group(group_id, interface_id, operation="read", options?)` | Read/receive from connected and remembered group members concurrently; disconnected and failed targets get individual results. |
+| `prepare_group_write(...)` / `execute_approved_group_write(approval_id)` | Freeze an exact group target set (maximum 32 devices and 4 KiB payload), validate each target against local policy, then request client-side MCP elicitation before one-time execution. Requires elicitation support; partial completion is possible. |
+| `explain_device_interface(device_id, interface_id)` / `get_device_capabilities(device_id)` / `run_device_diagnostics(device_id)` / `get_supported_protocols()` / `generate_device_report(device_id?)` | Explain observed interfaces, summarize known information and produce diagnostics/reports without claiming unknown protocols are understood. |
 | `analyze_payload(data_hex, baseline_hex?)` | Decode common byte views and compare samples; outputs are hypotheses, not protocol identification. |
 | `remember_discovery(device_id, category, content, confidence?, source?)` | Append an explicit hypothesis or confirmed finding. |
 | `update_device_profile(device_id, updates)` | Edit saved name and metadata; the physical fingerprint and transport stay fixed. |
 | `get_device_knowledge(device_id)` | Return profile, discoveries and recent experiment history. |
 | `export_device_profile(device_id)` | Export one complete profile as JSON text. |
 | `forget_device(device_id)` | Delete one profile, discoveries and experiments. |
-| `get_access_policy()` | Show the optional local restrictions file currently applied to communication. |
+| `get_access_policy()` | Show the local access policy currently applied to communication; mutating operations are default-deny without an exact allow rule. |
 
-With the official MCP SDK, tools that return objects provide structured MCP output as well as readable text for clients that only consume text. Read-only resources are available at `udmcp://devices` and `udmcp://devices/{device_id}/profile`; the latter contains that device's saved profile, discoveries and retained experiment metadata.
+With the official MCP SDK, tools that return objects provide structured MCP output as well as readable text for clients that only consume text. Read-only resources are available at `udmcp://devices` and `udmcp://devices/{device_id}/profile`; the latter contains that device's saved profile, discoveries and retained experiment metadata. The repository includes [the V1 acceptance specification](docs/PRODUCT_V1.md) and [the V2 distributed-platform specification](docs/PRODUCT_V2.md). V2 includes the V1 product as its local node; neither specification is a claim that every release gate is already complete.
 
 ### Generic communication examples
 

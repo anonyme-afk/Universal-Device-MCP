@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import hmac
 import importlib.util
 import json
 import logging
@@ -9,12 +12,23 @@ import os
 import shutil
 import sys
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
-from typing import Any
+from datetime import datetime, timezone
+from typing import Annotated, Any
 
 from mcp.server import MCPServer as FastMCP
+from mcp.server.mcpserver import (
+    AcceptedElicitation,
+    CancelledElicitation,
+    DeclinedElicitation,
+    Elicit,
+    ElicitationResult,
+    Resolve,
+)
+from pydantic import BaseModel, Field
 
 from .adapters import (
     ADBAdapter,
@@ -32,6 +46,8 @@ from .models import Device
 from .payload_analysis import analyze_payload as analyze_bytes
 
 _MAX_PAYLOAD_BYTES = 1024 * 1024
+_MAX_GROUP_WRITE_TARGETS = 32
+_MAX_GROUP_WRITE_BYTES = 4096
 logger = logging.getLogger("universal_device_mcp")
 
 
@@ -75,6 +91,8 @@ class DeviceService:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._pending_sessions = 0
         self._session_lock = threading.Lock()
+        self._pending_group_writes: dict[str, dict[str, Any]] = {}
+        self._group_write_lock = threading.Lock()
 
     def discover(self, transports: list[str] | None = None) -> dict[str, Any]:
         with self._scan_lock:
@@ -440,6 +458,171 @@ class DeviceService:
         return {"operation": operation, "requested": len(normalized), "completed": len(results),
                 "results": results}
 
+    @staticmethod
+    def _group_matches(device: dict[str, Any], selector: dict[str, Any]) -> bool:
+        allowed = {"device_ids", "transport", "name_contains", "manufacturer", "model",
+                   "vendor_id", "product_id"}
+        unknown = set(selector) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported group selector fields: {', '.join(sorted(unknown))}")
+        identity = device.get("identity") or {}
+        hardware = device.get("hardware") or {}
+        if "device_ids" in selector:
+            ids = selector["device_ids"]
+            if not isinstance(ids, list) or not ids or not all(isinstance(item, str) for item in ids):
+                raise ValueError("selector.device_ids must be a non-empty list of strings")
+            if device["device_id"] not in ids and device["fingerprint"] not in ids:
+                return False
+        for key in ("transport", "manufacturer", "model", "vendor_id", "product_id"):
+            if key not in selector:
+                continue
+            expected = selector[key]
+            if not isinstance(expected, str) or not expected:
+                raise ValueError(f"selector.{key} must be a non-empty string")
+            if key == "transport":
+                actual = device["transport"]
+            elif key == "manufacturer":
+                actual = identity.get("manufacturer") or hardware.get("manufacturer")
+            elif key == "model":
+                actual = identity.get("model") or identity.get("product") or device.get("name")
+            else:
+                actual = identity.get(key) or hardware.get(key)
+            if actual is None or str(actual).casefold() != expected.casefold():
+                return False
+        if "name_contains" in selector:
+            fragment = selector["name_contains"]
+            if not isinstance(fragment, str) or not fragment.strip():
+                raise ValueError("selector.name_contains must be a non-empty string")
+            if fragment.casefold() not in device.get("name", "").casefold():
+                return False
+        return True
+
+    def inspect_group(self, group_id: str) -> dict[str, Any]:
+        group = self.memory.get_group(group_id)
+        if group is None:
+            raise KeyError(f"Unknown device group {group_id!r}")
+        known = [device for device in self.memory.list_devices()
+                 if self._group_matches(device, group["selector"])]
+        connected = {device_id: device for device_id, device in self._connected.items()}
+        members = [{**item, "connected": item["device_id"] in connected}
+                   for item in known]
+        return {**group, "members": members, "member_count": len(members),
+                "connected_count": sum(member["connected"] for member in members)}
+
+    def read_group(self, group_id: str, interface_id: str, operation: str = "read",
+                   options: dict[str, Any] | None = None) -> dict[str, Any]:
+        group = self.inspect_group(group_id)
+        if not group["members"]:
+            return {"group_id": group_id, "requested": 0, "completed": 0, "results": []}
+        targets = [{"device_id": member["device_id"], "interface_id": interface_id,
+                    "options": options or {}} for member in group["members"]]
+        return {"group_id": group_id, **self.communicate_many(targets, operation)}
+
+    def prepare_group_write(self, group_id: str, interface_id: str, operation: str,
+                            data_hex: str | None = None,
+                            options: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Freeze a group write target set and payload for one-time human approval."""
+        if operation not in {"write", "send", "communicate", "control_write", "execute"}:
+            raise ValueError("Group write operation must be a supported mutating transport operation")
+        if data_hex is not None:
+            if not isinstance(data_hex, str) or len(data_hex) > _MAX_PAYLOAD_BYTES * 2:
+                raise ValueError(f"data_hex must be a string no larger than {_MAX_PAYLOAD_BYTES} bytes")
+            try:
+                payload = bytes.fromhex(data_hex)
+            except ValueError as exc:
+                raise ValueError("data_hex must contain valid hexadecimal bytes") from exc
+        else:
+            payload = None
+        if len(payload or b"") > _MAX_GROUP_WRITE_BYTES:
+            raise ValueError(f"Group write payloads are limited to {_MAX_GROUP_WRITE_BYTES} bytes")
+        if options is not None and not isinstance(options, dict):
+            raise ValueError("options must be an object")
+        frozen_options = json.loads(json.dumps(options or {}))
+        if len(json.dumps(frozen_options, ensure_ascii=False)) > 16_384:
+            raise ValueError("options must be an object no larger than 16 KiB when serialized")
+        group = self.inspect_group(group_id)
+        if not group["members"]:
+            raise ValueError("Cannot prepare a write for an empty device group")
+        offline = [member["device_id"] for member in group["members"] if not member["connected"]]
+        if offline:
+            raise RuntimeError(f"Group contains disconnected devices; refresh or narrow the group: {offline}")
+        if len(group["members"]) > _MAX_GROUP_WRITE_TARGETS:
+            raise ValueError(f"Group writes are limited to {_MAX_GROUP_WRITE_TARGETS} devices per approval")
+        targets = [{"device_id": member["device_id"], "interface_id": interface_id}
+                   for member in group["members"]]
+        for target in targets:
+            device, _ = self._device(target["device_id"])
+            self._enforce_policy(device, operation, payload, interface_id)
+        request = {"group_id": group_id, "targets": targets, "operation": operation,
+                   "data_hex": data_hex, "options": frozen_options}
+        request_digest = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"),
+                                         default=str).encode()).hexdigest()
+        approval_id = f"approval-{uuid.uuid4().hex}"
+        expires_at = time.monotonic() + 120
+        plan = {"approval_id": approval_id, **request, "request_sha256": request_digest,
+                "expires_at_monotonic": expires_at, "group_name": group["name"]}
+        with self._group_write_lock:
+            now = time.monotonic()
+            self._pending_group_writes = {key: item for key, item in self._pending_group_writes.items()
+                                          if item["expires_at_monotonic"] > now}
+            if len(self._pending_group_writes) >= 128:
+                raise RuntimeError("Too many pending group write approvals; retry after they expire")
+            self._pending_group_writes[approval_id] = plan
+        return {"approval_id": approval_id, "group_id": group_id, "group_name": group["name"],
+                "operation": operation, "interface_id": interface_id, "targets": targets,
+                "target_count": len(targets), "payload_bytes": len(payload or b""),
+                "request_sha256": request_digest, "expires_in_seconds": 120,
+                "requires_client_elicitation": True,
+                "notice": "No hardware operation has run; approval is one-time and expires after 120 seconds."}
+
+    def pending_group_write(self, approval_id: str) -> dict[str, Any]:
+        with self._group_write_lock:
+            plan = self._pending_group_writes.get(approval_id)
+        if plan is None or plan["expires_at_monotonic"] <= time.monotonic():
+            raise KeyError("Unknown or expired group write approval")
+        return copy.deepcopy(plan)
+
+    def discard_group_write(self, approval_id: str) -> None:
+        with self._group_write_lock:
+            self._pending_group_writes.pop(approval_id, None)
+
+    def execute_group_write(self, approval_id: str) -> dict[str, Any]:
+        with self._group_write_lock:
+            plan = self._pending_group_writes.pop(approval_id, None)
+        if plan is None or plan["expires_at_monotonic"] <= time.monotonic():
+            raise KeyError("Unknown, expired, or already used group write approval")
+        request = {key: plan[key] for key in ("group_id", "targets", "operation", "data_hex", "options")}
+        digest = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"),
+                                         default=str).encode()).hexdigest()
+        if not hmac.compare_digest(digest, plan["request_sha256"]):
+            raise RuntimeError("Frozen group write plan integrity check failed")
+        outcomes: list[dict[str, Any] | None] = [None] * len(plan["targets"])
+        with ThreadPoolExecutor(max_workers=min(16, len(plan["targets"])), thread_name_prefix="udmcp-group-write") as pool:
+            futures = {pool.submit(self.communicate, target["device_id"], target["interface_id"],
+                                   plan["operation"], plan["data_hex"], options=plan["options"]): index
+                       for index, target in enumerate(plan["targets"])}
+            for future in as_completed(futures):
+                index = futures[future]
+                target = plan["targets"][index]
+                try:
+                    outcomes[index] = {**target, "ok": True, "response": future.result()}
+                except Exception as exc:
+                    outcomes[index] = {**target, "ok": False, "error": str(exc)}
+        return {"approval_id": approval_id, "group_id": plan["group_id"],
+                "operation": plan["operation"], "requested": len(plan["targets"]),
+                "completed": len(outcomes), "results": outcomes,
+                "atomic": False, "note": "Results are per target; completed hardware actions cannot be rolled back."}
+
+    def explain_interface(self, device_id: str, interface_id: str) -> dict[str, Any]:
+        device, _ = self._device(device_id)
+        interface = next((item for item in device.interfaces if str(item.get("id")) == interface_id), None)
+        if interface is None:
+            raise KeyError(f"Interface {interface_id!r} was not found on {device_id!r}")
+        return {"device_id": device_id, "transport": device.transport,
+                "interface": interface, "confidence": "observed",
+                "explanation": ("This description comes from the host adapter's current device metadata. "
+                                "It does not imply that an undocumented command or write format is understood.")}
+
 
 service = DeviceService()
 mcp = FastMCP("Universal Device MCP", instructions=(
@@ -606,6 +789,179 @@ def communicate_many(targets: list[dict[str, Any]], operation: str = "read") -> 
     each device is resolved and checked independently, so identical models remain distinct.
     """
     return _json(service.communicate_many(targets, operation))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=False, open_world=False))
+def create_device_group(name: str, selector: dict[str, Any]) -> dict[str, Any]:
+    """Save a dynamic device group using exact IDs or supported metadata criteria.
+
+    Selector fields: device_ids, transport, name_contains, manufacturer, model, vendor_id, product_id.
+    Groups resolve against remembered profiles and report current connection state when read.
+    """
+    return _json(service.memory.create_group(name, selector))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def list_device_groups() -> dict[str, Any]:
+    """List locally saved dynamic groups and their selectors."""
+    return _json({"groups": service.memory.list_groups()})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def inspect_device_group(group_id: str) -> dict[str, Any]:
+    """Resolve a saved group to matching device profiles and current connection states."""
+    return _json(service.inspect_group(group_id))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=True))
+def read_device_group(group_id: str, interface_id: str, operation: str = "read",
+                      options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run a bounded concurrent read/receive on each member; returns a distinct result per device.
+
+    Group writes are intentionally not supported. Every member is independently checked for
+    connection state, interface validity, and local access policy.
+    """
+    return _json(service.read_group(group_id, interface_id, operation, options))
+
+
+class GroupWriteApproval(BaseModel):
+    approve: bool = Field(description="Approve this exact frozen target list, operation, and payload hash")
+
+
+async def _resolve_group_write_approval(
+    approval_id: str,
+) -> GroupWriteApproval | Elicit[GroupWriteApproval]:
+    """Ask the connected MCP client to approve the exact short-lived frozen write plan."""
+    plan = service.pending_group_write(approval_id)
+    targets = ", ".join(f"{item['device_id']}@{item['interface_id']}" for item in plan["targets"])
+    options = json.dumps(plan["options"], ensure_ascii=False, sort_keys=True, default=str)
+    if len(options) > 4096:
+        raise ValueError("Prepared group write options exceed the human approval display limit")
+    payload_hex = plan["data_hex"] or "<empty>"
+    message = (
+        f"Approve hardware write for group {plan['group_name']!r}? "
+        f"Operation={plan['operation']}; targets ({len(plan['targets'])})=[{targets}]; "
+        f"data_hex={payload_hex}; request_sha256={plan['request_sha256']}; options={options}. "
+        "The plan expires in at most 120 seconds. Partial completion is possible; actions cannot be rolled back."
+    )
+    return Elicit(message, GroupWriteApproval)
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=True, open_world=False))
+def prepare_group_write(group_id: str, interface_id: str, operation: str,
+                        data_hex: str | None = None,
+                        options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Freeze an exact group write plan; this preview does not communicate with hardware."""
+    return _json(service.prepare_group_write(group_id, interface_id, operation, data_hex, options))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=True,
+                                        idempotent=False, open_world=False))
+async def execute_approved_group_write(
+    approval_id: str,
+    approval: Annotated[ElicitationResult[GroupWriteApproval], Resolve(_resolve_group_write_approval)],
+) -> dict[str, Any]:
+    """Execute a prepared group write only after the MCP client obtains human approval.
+
+    Clients without MCP elicitation support fail closed. The approval is one-time, expires,
+    and is bound to the exact frozen target set, operation, options and payload hash.
+    """
+    match approval:
+        case AcceptedElicitation(data=GroupWriteApproval(approve=True)):
+            return _json(service.execute_group_write(approval_id))
+        case AcceptedElicitation():
+            service.discard_group_write(approval_id)
+            return _json({"executed": False, "reason": "The user did not approve the group write."})
+        case DeclinedElicitation():
+            service.discard_group_write(approval_id)
+            return _json({"executed": False, "reason": "The user declined the group write."})
+        case CancelledElicitation():
+            service.discard_group_write(approval_id)
+            return _json({"executed": False, "reason": "The user cancelled the group write."})
+        case _:
+            service.discard_group_write(approval_id)
+            raise RuntimeError("No accepted human approval was received; no hardware action was run")
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=True,
+                                        idempotent=False, open_world=False))
+def delete_device_group(group_id: str) -> dict[str, Any]:
+    """Delete a saved group definition without deleting device profiles or touching hardware."""
+    if not service.memory.delete_group(group_id):
+        raise KeyError(f"Unknown device group {group_id!r}")
+    return _json({"deleted": group_id})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def explain_device_interface(device_id: str, interface_id: str) -> dict[str, Any]:
+    """Explain an observed interface from adapter metadata without claiming its protocol is understood."""
+    return _json(service.explain_interface(device_id, interface_id))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def get_device_capabilities(device_id: str) -> dict[str, Any]:
+    """Summarize observed interfaces and saved protocol discoveries with their confidence labels."""
+    device, _ = service._device(device_id)
+    knowledge = service.memory.get_knowledge(device_id)
+    return _json({"device_id": device_id, "transport": device.transport,
+                  "connected": device.connected, "interfaces": device.interfaces,
+                  "documented_discoveries": knowledge["discoveries"],
+                  "note": "An observed interface is not proof that an undocumented command is understood."})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=True))
+def run_device_diagnostics(device_id: str) -> dict[str, Any]:
+    """Check connection state, interfaces, adapter inspection, and stored knowledge for one device."""
+    device, adapter = service._device(device_id)
+    checks: list[dict[str, Any]] = [
+        {"name": "connected", "ok": device.connected, "detail": "Device is currently discoverable." if device.connected
+         else "Only the remembered profile is available."},
+        {"name": "interfaces", "ok": bool(device.interfaces), "count": len(device.interfaces)},
+    ]
+    if device.connected:
+        try:
+            inspect = getattr(adapter, "inspect", None)
+            details = inspect(device) if callable(inspect) else device.to_dict()
+            checks.append({"name": "adapter_inspection", "ok": True, "details": details})
+        except Exception as exc:
+            checks.append({"name": "adapter_inspection", "ok": False, "error": str(exc)})
+    return _json({"device_id": device_id, "transport": device.transport, "checks": checks,
+                  "knowledge": service.memory.get_knowledge(device_id)})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def get_supported_protocols() -> dict[str, Any]:
+    """List transport implementations available in this server and their adapter classes."""
+    return _json({"transports": [{"transport": adapter.transport, "adapter": type(adapter).__name__}
+                                 for adapter in service.adapters],
+                  "scope": "Support means the adapter can use host-exposed interfaces; it does not imply support for every device model or proprietary protocol."})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def generate_device_report(device_id: str | None = None) -> dict[str, Any]:
+    """Generate a JSON inventory/diagnostic report for one device or all remembered devices."""
+    devices = ([service.memory.get_device(device_id)] if device_id
+               else service.memory.list_devices())
+    if device_id and devices == [None]:
+        raise KeyError(f"Unknown device {device_id!r}")
+    report = []
+    for item in devices:
+        current = service._connected.get(item["device_id"])
+        report.append({"device": item, "connected": bool(current),
+                       "interfaces": current.interfaces if current else item["interfaces"],
+                       "knowledge": service.memory.get_knowledge(item["device_id"])})
+    return _json({"count": len(report), "devices": report,
+                  "generated_at": datetime.now(timezone.utc).isoformat()})
 
 
 @mcp.tool()

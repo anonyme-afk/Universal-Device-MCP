@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -111,6 +112,10 @@ class DeviceMemory:
                     device_id TEXT NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
                     event_type TEXT NOT NULL,
                     details_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS device_groups (
+                    group_id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                    selector_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_discoveries_device ON discoveries(device_id);
                 CREATE INDEX IF NOT EXISTS idx_experiments_device ON experiments(device_id);
@@ -341,4 +346,38 @@ class DeviceMemory:
         if device is None:
             raise KeyError(f"Unknown device: {device_id}")
         return {**device, **self.get_knowledge(device_id)}
+
+    def create_group(self, name: str, selector: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(name, str) or not name.strip() or len(name) > 120:
+            raise ValueError("name must contain between 1 and 120 characters")
+        if not isinstance(selector, dict) or not selector:
+            raise ValueError("selector must be a non-empty object")
+        now = utc_now()
+        group_id = f"group-{uuid.uuid4().hex[:16]}"
+        with self._connect() as con:
+            con.execute("INSERT INTO device_groups VALUES (?,?,?,?,?)",
+                        (group_id, name.strip(), json.dumps(selector, ensure_ascii=False), now, now))
+        return {"group_id": group_id, "name": name.strip(), "selector": selector,
+                "created_at": now, "updated_at": now}
+
+    def get_group(self, group_id: str) -> dict[str, Any] | None:
+        with self._connect() as con:
+            row = con.execute("SELECT * FROM device_groups WHERE group_id=?", (group_id,)).fetchone()
+        return self._group_row(row) if row else None
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        with self._connect() as con:
+            return [self._group_row(row) for row in con.execute(
+                "SELECT * FROM device_groups ORDER BY name COLLATE NOCASE")]
+
+    def delete_group(self, group_id: str) -> bool:
+        with self._connect() as con:
+            cursor = con.execute("DELETE FROM device_groups WHERE group_id=?", (group_id,))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _group_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {"group_id": row["group_id"], "name": row["name"],
+                "selector": json.loads(row["selector_json"]),
+                "created_at": row["created_at"], "updated_at": row["updated_at"]}
 
