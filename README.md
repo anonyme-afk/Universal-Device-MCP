@@ -48,6 +48,8 @@ Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, doc
 
 ## Install
 
+For copy-and-paste setup instructions for Claude Desktop, Claude Code, Codex, Cursor, VS Code, Cline, LM Studio, Ollama-backed models and Google Antigravity, see the [simple installation guide](docs/INSTALLATION.md).
+
 ### Quick setup for Claude Desktop, Cursor or VS Code
 
 You do not need to clone the repository, create a Python environment, or know Python. Install `uv` once using its [official installer](https://docs.astral.sh/uv/getting-started/installation/). `uv` downloads the required Python version and the MCP dependencies when the server first starts.
