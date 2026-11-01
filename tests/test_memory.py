@@ -52,6 +52,18 @@ class DeviceMemoryTests(unittest.TestCase):
         events = self.memory.list_events(after_id=first - 1)
         self.assertEqual(["connected", "disconnected"], [event["type"] for event in events])
 
+    def test_history_purge_removes_history_but_keeps_device_profile(self):
+        self.memory.save_device(Device("device-a", "serial", "Board", "serial:abc"))
+        self.memory.add_event("device-a", "connected", {"transport": "serial"})
+        self.memory.add_experiment("device-a", "COM1", "read", {}, {"data_hex": "CAFE"}, True)
+        with self.memory._connect() as con:
+            con.execute("UPDATE device_events SET created_at='2000-01-01T00:00:00+00:00'")
+            con.execute("UPDATE experiments SET created_at='2000-01-01T00:00:00+00:00'")
+        removed = self.memory.purge_history(30)
+        self.assertEqual(1, removed["events"])
+        self.assertEqual(1, removed["experiments"])
+        self.assertIsNotNone(self.memory.get_device("device-a"))
+
     def test_profile_update_merges_metadata_and_preserves_identity(self):
         self.memory.save_device(Device("device-a", "usb", "Sensor", "usb:1234",
                                        identity={"serial_number": "abc"}, hardware={"revision": 1}))

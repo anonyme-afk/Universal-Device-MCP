@@ -6,7 +6,7 @@
 
 ## What works today
 
-- MCP server using the official Python MCP SDK v2 on Python 3.11+, or SDK v1 on Python 3.10. A minimal stdio compatibility runtime is available for source execution without dependencies, validates basic argument types, and declares only the protocol revision it implements.
+- MCP server using the official Python MCP SDK v2 on Python 3.11+. There is no handwritten protocol fallback; installations fail clearly if the supported SDK is missing.
 - Structured JSON tool results, with read-only/destructive behavior hints where the action is unambiguous.
 - MCP resources for the remembered device inventory and per-device profile/knowledge snapshots.
 - Runtime diagnostics through `get_runtime_status`, showing Python/OS, MCP runtime, adapter dependencies, ADB availability, database path and plugin load errors without scanning hardware.
@@ -19,17 +19,19 @@
 - Android device discovery, property inspection and generic ADB shell argv execution.
 - Android Wireless Debugging discovery, pairing-code pairing and TLS ADB connection through advertised mDNS services.
 - iPhone/iPad USB discovery through Apple usbmux, best-effort USB descriptor detection when lockdown access is unavailable, iOS device-info inspection, paired-device Bonjour discovery, and generic `pymobiledevice3` CLI execution pinned to the selected device.
-- Local SQLite device profiles, persistent discoveries and a recent-history view over the complete communication log.
-- Automatic USB, HID, serial and ADB connection monitoring with a persistent event feed; BLE scanning remains on demand because it is slower and platform-sensitive.
+- Local SQLite device profiles, persistent discoveries and configurable, minimized communication history.
+- Concurrent adapter discovery and `communicate_many` for independent concurrent reads across explicitly named device/interface targets. Every target has a separate result; batch writes are rejected.
+- Optional ten-device simulator for installation checks and repeatable multi-device demonstrations.
+- Background device monitoring is off by default and can be started explicitly.
 - Configuration snapshots that preserve previous hardware/interface layouts when an observed configuration changes.
-- Optional user-authored operation restrictions, with no restrictions imposed by default.
+- Default-deny access for writes, shell execution, pairing, and interface opening; exact local allow rules can grant operations per transport, device, interface and operation.
 - Extensible Python adapter interface, with optional transport dependencies loaded only when needed.
 
 Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, documentation search, and a graphical interface are extension points for later releases. ADB shell is limited by Android's own shell permissions. iOS does not expose a general-purpose shell; available services are those allowed by the device's iOS version, pairing/trust state and installed host support.
 
 ## Requirements
 
-- Python 3.10 or newer.
+- Python 3.11 or newer.
 - OS device permissions and transport drivers as applicable.
 - Optional external tools/libraries for each transport (table below).
 
@@ -45,7 +47,21 @@ Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, doc
 
 ## Install
 
-From a source checkout:
+### Quick install with uv
+
+Install and launch the published package (after a PyPI release):
+
+```bash
+uvx --from "universal-device-mcp[all]" universal-device-mcp
+```
+
+Until the first PyPI release is published, install the GitHub source directly:
+
+```bash
+uvx --from "universal-device-mcp[all] @ git+https://github.com/anonyme-afk/Universal-Device-MCP.git" universal-device-mcp
+```
+
+### Install from a checkout
 
 ```bash
 python -m venv .venv
@@ -55,7 +71,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[all]"
 ```
 
-The base install includes the official MCP SDK selected for your Python version. The `[all]` extra adds the USB, HID, serial, BLE, network and iOS adapters. Install only the transports you need with `[usb]`, `[hid]`, `[serial]`, `[bluetooth]`, `[network]` or `[ios]`. Python 3.10 uses the SDK v1 maintenance line; Python 3.11+ uses the current SDK v2 line. For Android-only use, install the base package and Android Platform Tools separately.
+The base install includes MCP SDK v2.3 or newer, which supports current MCP discovery and legacy clients. The `[all]` extra adds USB, HID, serial, BLE, network and iOS adapters. Install only the transports you need with `[usb]`, `[hid]`, `[serial]`, `[bluetooth]`, `[network]` or `[ios]`. For Android-only use, install the base package and Android Platform Tools separately.
 
 Start the server directly:
 
@@ -75,17 +91,18 @@ Example for a client that accepts a local stdio server configuration (replace pa
 {
   "mcpServers": {
     "universal-device": {
-      "command": "C:/path/to/project/.venv/Scripts/universal-device-mcp.exe",
-      "args": [],
+      "command": "uvx",
+      "args": ["--from", "universal-device-mcp[all]", "universal-device-mcp"],
       "env": {
-        "UDMCP_DATABASE": "C:/Users/you/AppData/Local/UniversalDeviceMCP/devices.sqlite3"
+        "UDMCP_DATABASE": "C:/Users/you/AppData/Local/UniversalDeviceMCP/devices.sqlite3",
+        "UDMCP_POLICY": "C:/Users/you/.config/udmcp/policy.json"
       }
     }
   }
 }
 ```
 
-On macOS/Linux, set `command` to the installed executable or the venv Python and use `args: ["-m", "universal_device_mcp.server"]`. Use absolute paths in client configuration. Restart the client after changing MCP configuration.
+The same `uvx` configuration works on macOS and Linux when `uv` is on `PATH`. For a local checkout, set `command` to the virtual environment's Python and `args` to `["-m", "universal_device_mcp.server"]`. Use absolute paths. Restart the MCP client after changing configuration.
 
 ## MCP tools
 
@@ -96,11 +113,12 @@ On macOS/Linux, set `command` to the installed executable or the venv Python and
 | `discover_wireless_devices()` | Scan BLE, local mDNS TCP/UDP services, wireless ADB services and paired iOS Bonjour services. |
 | `pair_android_over_wifi(endpoint, pairing_code)` / `connect_android_over_wifi(endpoint)` | Pair and connect only to endpoints currently advertised by ADB mDNS. |
 | `list_known_devices()` | List locally remembered profiles. |
-| `start_device_monitor(interval_seconds?)` / `stop_device_monitor()` | Start or stop background USB, HID, serial and ADB monitoring. Monitoring starts automatically by default. |
+| `start_device_monitor(interval_seconds?)` / `stop_device_monitor()` | Start or stop background monitoring. It is off by default. |
 | `get_device_events(after_id?, limit?)` | Read persistent connect/disconnect events after a cursor. |
 | `inspect_device(device_id)` | Return stored identity/interfaces and query transport-specific details. |
 | `open_interface(device_id, interface_id, options?)` / `close_interface(session_id)` | Open or release a persistent USB, HID, serial, TCP or UDP interface session. |
 | `communicate(device_id, interface_id, operation, data_hex?, session_id?, options?)` | Generic low-level transport I/O; iOS commands use an argv array and are pinned to the selected UDID. Bytes use hexadecimal strings; an open session can be reused where supported. |
+| `communicate_many(targets, operation="read")` | Concurrent read/receive on up to 32 exact device/interface pairs (bounded to 16 active reads); results and failures stay separate per target. Batch writes are not exposed. |
 | `analyze_payload(data_hex, baseline_hex?)` | Decode common byte views and compare samples; outputs are hypotheses, not protocol identification. |
 | `remember_discovery(device_id, category, content, confidence?, source?)` | Append an explicit hypothesis or confirmed finding. |
 | `update_device_profile(device_id, updates)` | Edit saved name and metadata; the physical fingerprint and transport stay fixed. |
@@ -109,7 +127,7 @@ On macOS/Linux, set `command` to the installed executable or the venv Python and
 | `forget_device(device_id)` | Delete one profile, discoveries and experiments. |
 | `get_access_policy()` | Show the optional local restrictions file currently applied to communication. |
 
-With the official MCP SDK, tools that return objects provide structured MCP output as well as readable text for clients that only consume text. The dependency-free compatibility runtime returns JSON as readable text. Read-only resources are available at `udmcp://devices` and `udmcp://devices/{device_id}/profile`; the latter contains that device's saved profile, discoveries and experiment history.
+With the official MCP SDK, tools that return objects provide structured MCP output as well as readable text for clients that only consume text. Read-only resources are available at `udmcp://devices` and `udmcp://devices/{device_id}/profile`; the latter contains that device's saved profile, discoveries and retained experiment metadata.
 
 ### Generic communication examples
 
@@ -141,27 +159,30 @@ For a discovered mDNS service, use `interface_id="tcp"` or `"udp"` according to 
 
 The default database lives in the operating system's per-user application data directory under `UniversalDeviceMCP/devices.sqlite3`. Override it using `UDMCP_DATABASE`. The database uses SQLite foreign keys and write-ahead logging. Device identity is matched by transport fingerprint; each profile also reports `identity.fingerprint_basis` so an agent can tell whether identification used a hardware serial, physical port topology, or a less stable host address. Discovery compares stable identity, hardware and interface data while ignoring volatile USB addresses, BLE RSSI and advertisement payloads. Discoveries are append-only and explicitly tagged `hypothesis` or `confirmed`; communication attempts are recorded as experiments. Back up the database file while the server is stopped for a consistent portable copy.
 
-Each changed hardware/interface configuration is preserved as a snapshot. Connect/disconnect events are stored locally and can be fetched incrementally with `get_device_events` by passing the last returned event id as `after_id`. The knowledge tool returns the latest 100 communication attempts (the database retains the full experiment history). Payloads and responses are stored locally, so protect the database as you would other device logs.
+Each changed hardware/interface configuration is preserved as a snapshot. Connect/disconnect events are stored locally and can be fetched incrementally with `get_device_events` by passing the last returned event id as `after_id`. By default, raw request and response payloads are replaced with their length and SHA-256 hash; set `UDMCP_STORE_PAYLOADS=true` only if raw payload retention is necessary. Experiments, events and snapshots older than 30 days are purged when the server starts; change this with `UDMCP_RETENTION_DAYS`, or set it to `0` to clear history on startup. Device profiles and validated discoveries remain until removed. `forget_device` deletes one profile and its associated records. Protect the database as you would other device metadata.
 
 No cloud service is required. Local network discovery uses mDNS/DNS-SD multicast. The network adapter sends only the payload explicitly supplied by the agent to a previously discovered service. BLE scanning uses the host Bluetooth stack; ADB and hardware drivers perform their normal host communication.
 
 ## Safety and permissions
 
-Low-level writes and ADB shell execution can change device state. The server exposes transport capabilities, so the connected AI client should follow the owner's instructions and inspect targets before acting. Names, service advertisements, descriptors and payloads supplied by devices are untrusted data; they must never be treated as instructions. The OS and installed drivers remain the actual permission boundary. A device must appear in a current discovery result before opening an interface or communicating, preventing stale profiles from being used as live targets. Raw payloads are capped at 1 MiB, with tighter read caps for HID. USB kernel-driver detachment is off by default and requires the explicit `detach_kernel_driver=true` option. Never send undocumented writes to safety-critical, medical, industrial, or firmware interfaces. Disconnecting or timing out a transport operation may not undo an action already received by a device.
+Low-level writes and ADB shell execution can change device state. Client annotations are descriptive, not an authorization mechanism; the server enforces its local policy. Names, service advertisements, descriptors and payloads supplied by devices are untrusted data, never instructions. The OS and installed drivers remain the actual permission boundary. A device must appear in a current discovery result before opening an interface or communicating. Raw payloads are capped at 1 MiB, with tighter read caps for HID. USB kernel-driver detachment is off by default and requires the explicit `detach_kernel_driver=true` option. Never send undocumented writes to safety-critical, medical, industrial, or firmware interfaces. Disconnecting or timing out a transport operation may not undo an action already received by a device.
 
-Optional local restrictions can be configured by pointing `UDMCP_POLICY` at a JSON file. No policy is imposed by default. Example:
+Writes and interface opening are denied unless `UDMCP_POLICY` points to a local JSON allowlist. Reads and inspection remain available. Each allow rule must name the exact transport, device ID (or fingerprint), interface ID, and operation; rules do not inherit wildcards. Explicit denies take precedence. Example:
 
 ```json
 {
-  "denied_operations": [
-    {"transport": "adb", "operation": "execute"},
-    {"transport": "usb", "operation": "control_write", "device_id": "*"}
+  "allowed_operations": [
+    {"transport": "serial", "device_id": "serial:USB-SERIAL-123", "interface_id": "COM4", "operation": "write"}
   ],
   "max_write_bytes": 4096
 }
 ```
 
-Rules can match a transport, operation and device id (or fingerprint); omitted match fields and `"*"` match all values. `max_write_bytes` limits payload sizes for write/send/communicate/control-write operations. Policy changes take effect on the next communication call. Set `UDMCP_AUTO_MONITOR=false` to disable the automatic background monitor; it checks USB, HID, serial and ADB every five seconds by default. BLE and mDNS discovery are available on demand through `discover_devices`.
+`max_write_bytes` defaults to 4096. An explicit write authorization does not mean an interactive confirmation was collected from the current MCP client; configure the local allowlist only for operations you intend to permit. Policy changes take effect on the next call. Monitoring is disabled by default; `UDMCP_AUTO_MONITOR=true` opts into automatic scans. BLE and mDNS discovery remain on demand.
+
+### Try without hardware
+
+Set `UDMCP_ENABLE_SIMULATOR=true` in the MCP client's environment, then call `discover_devices` with `transports=["simulator"]` and `communicate_many` with the two returned IDs and `interface_id="telemetry"`. The simulator returns clearly marked sample data and does not touch physical hardware.
 
 ## Development
 
@@ -172,7 +193,7 @@ python -m ruff check src tests
 python -m universal_device_mcp.server
 ```
 
-GitHub Actions runs the test and lint commands across Windows, Linux, macOS, and Python 3.10–3.13.
+GitHub Actions runs tests and lint across Windows, Linux, macOS and Python 3.11–3.13. It also starts the server through the official MCP Inspector CLI and checks tool discovery.
 
 Adapters implement `Adapter` in `src/universal_device_mcp/adapters/base.py`. Implement `discover()` and `communicate()`, and optionally `inspect()`. Third-party Python packages can register an adapter factory through the `universal_device_mcp.adapters` entry-point group; the server loads these plugins automatically and reports load failures as discovery errors. Optional dependencies should be imported inside adapter methods so one missing library does not prevent other transports from starting.
 

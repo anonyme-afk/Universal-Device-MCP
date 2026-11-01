@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -107,7 +108,9 @@ class AccessPolicyTests(unittest.TestCase):
             service = DeviceService(memory=memory, adapters=[adapter])
             device = service.discover()["devices"][0]
             policy_path = Path(folder) / "policy.json"
-            policy_path.write_text(json.dumps({"max_write_bytes": 1}), encoding="utf-8")
+            policy_path.write_text(json.dumps({"max_write_bytes": 1, "allowed_operations": [
+                {"transport": "fake", "device_id": device["device_id"],
+                 "interface_id": "test", "operation": "communicate"}]}), encoding="utf-8")
             with patch.dict(os.environ, {"UDMCP_POLICY": str(policy_path)}):
                 with self.assertRaisesRegex(RuntimeError, "local policy limit is 1"):
                     service.communicate(device["device_id"], "test", "communicate", "CAFE")
@@ -126,13 +129,21 @@ class AccessPolicyTests(unittest.TestCase):
             adapter = FakeAdapter()
             service = DeviceService(memory=memory, adapters=[adapter])
             device = service.discover()["devices"][0]
-            opened = service.open_interface(device["device_id"], "test")
-            result = service.communicate(device["device_id"], "test", "write", "CAFE",
-                                         session_id=opened["session_id"])
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({"allowed_operations": [
+                {"transport": "fake", "device_id": device["device_id"],
+                 "interface_id": "test", "operation": "open"},
+                {"transport": "fake", "device_id": device["device_id"],
+                 "interface_id": "test", "operation": "write"}]}), encoding="utf-8")
+            with patch.dict(os.environ, {"UDMCP_POLICY": str(policy_path)}):
+                opened = service.open_interface(device["device_id"], "test")
+                result = service.communicate(device["device_id"], "test", "write", "CAFE",
+                                             session_id=opened["session_id"])
             self.assertTrue(result["session_open"])
             experiment = memory.get_knowledge(device["device_id"])["experiments"][0]
-            self.assertEqual({"data_hex": "CAFE", "session_id": opened["session_id"], "options": {}},
-                             experiment["request"])
+            self.assertEqual({"redacted": True, "length_bytes": 2,
+                              "sha256": hashlib.sha256(bytes.fromhex("CAFE")).hexdigest()},
+                             experiment["request"]["data_hex"])
             service.close_interface(opened["session_id"])
             self.assertEqual(0, len(service._sessions))
             if old_database is None:

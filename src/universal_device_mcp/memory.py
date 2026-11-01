@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -60,6 +62,7 @@ class DeviceMemory:
         self.path = Path(path) if path else _default_database_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+        self.purge_history(int(os.environ.get("UDMCP_RETENTION_DAYS", "30")))
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -242,6 +245,9 @@ class DeviceMemory:
 
     def add_experiment(self, device_id: str, interface_id: str | None, operation: str,
                        request: Any, response: Any, success: bool) -> None:
+        keep_payloads = os.environ.get("UDMCP_STORE_PAYLOADS", "false").lower() in {"1", "true", "yes"}
+        request = self._sanitize_audit(request, keep_payloads)
+        response = self._sanitize_audit(response, keep_payloads)
         with self._connect() as con:
             row = con.execute("SELECT device_id FROM devices WHERE device_id=? OR fingerprint=?", (device_id, device_id)).fetchone()
             if not row:
@@ -249,6 +255,49 @@ class DeviceMemory:
             con.execute("INSERT INTO experiments(device_id,interface_id,operation,request_json,response_json,success,created_at) VALUES(?,?,?,?,?,?,?)",
                         (row["device_id"], interface_id, operation, json.dumps(request, default=str),
                          json.dumps(response, default=str), int(success), utc_now()))
+
+    @classmethod
+    def _sanitize_audit(cls, value: Any, keep_payloads: bool, key: str = "") -> Any:
+        """Keep audit metadata by default while redacting payloads and credentials."""
+        if isinstance(value, dict):
+            result = {}
+            for child_key, child in value.items():
+                lowered = child_key.lower()
+                if any(secret in lowered for secret in ("password", "token", "secret", "pairing_code")):
+                    result[child_key] = "[redacted]"
+                elif lowered in {"data_hex", "payload_hex", "raw_bytes"} and isinstance(child, str):
+                    try:
+                        raw = bytes.fromhex(child) if lowered.endswith("_hex") else child.encode("utf-8")
+                    except ValueError:
+                        raw = child.encode("utf-8")
+                    result[child_key] = child if keep_payloads else {
+                        "redacted": True, "length_bytes": len(raw),
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                    }
+                else:
+                    result[child_key] = cls._sanitize_audit(child, keep_payloads, child_key)
+            return result
+        if isinstance(value, list):
+            return [cls._sanitize_audit(item, keep_payloads, key) for item in value]
+        return value
+
+    def purge_history(self, retention_days: int | None = 30) -> dict[str, int]:
+        """Remove old communication/event history; None clears history while preserving profiles."""
+        if retention_days is not None and (not isinstance(retention_days, int) or retention_days < 0):
+            raise ValueError("retention_days must be a non-negative integer or null")
+        with self._connect() as con:
+            if retention_days is None:
+                experiments = con.execute("DELETE FROM experiments").rowcount
+                events = con.execute("DELETE FROM device_events").rowcount
+                snapshots = con.execute("DELETE FROM device_snapshots").rowcount
+            else:
+                from datetime import datetime, timedelta, timezone
+                before = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat(timespec="seconds")
+                experiments = con.execute("DELETE FROM experiments WHERE created_at < ?", (before,)).rowcount
+                events = con.execute("DELETE FROM device_events WHERE created_at < ?", (before,)).rowcount
+                snapshots = con.execute("DELETE FROM device_snapshots WHERE observed_at < ?", (before,)).rowcount
+            return {"experiments": max(0, experiments), "events": max(0, events),
+                    "snapshots": max(0, snapshots)}
 
     def get_knowledge(self, device_id: str) -> dict[str, Any]:
         with self._connect() as con:

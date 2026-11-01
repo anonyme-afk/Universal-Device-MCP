@@ -10,8 +10,11 @@ import shutil
 import sys
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from typing import Any
+
+from mcp.server import MCPServer as FastMCP
 
 from .adapters import (
     ADBAdapter,
@@ -23,7 +26,7 @@ from .adapters import (
     USBAdapter,
 )
 from .adapters.base import Adapter
-from .mcp_runtime import USING_OFFICIAL_SDK, FastMCP
+from .adapters.simulator import SimulatorAdapter
 from .memory import DeviceMemory
 from .models import Device
 from .payload_analysis import analyze_payload as analyze_bytes
@@ -62,6 +65,8 @@ class DeviceService:
         ]
         plugins, self.plugin_errors = _load_plugin_adapters() if adapters is None else ([], [])
         self.adapters.extend(plugins)
+        if adapters is None and os.environ.get("UDMCP_ENABLE_SIMULATOR", "false").lower() in {"1", "true", "yes"}:
+            self.adapters.append(SimulatorAdapter())
         self._connected: dict[str, Device] = {}
         self._monitor_thread: threading.Thread | None = None
         self._monitor_stop = threading.Event()
@@ -125,31 +130,42 @@ class DeviceService:
             if unsupported:
                 errors.append({"transport": "requested", "error":
                                f"Unsupported transports: {', '.join(unsupported)}. Available: {', '.join(sorted(available))}"})
-        for adapter in self.adapters:
-            if transports and adapter.transport not in transports:
-                continue
-            try:
-                for device in adapter.discover():
-                    stored = self.memory.save_device(device)
-                    device.device_id = stored["device_id"]
-                    previous_device = self._connected.get(device.device_id)
-                    was_connected = previous_device is not None
-                    self._connected[device.device_id] = device
-                    present_ids.add(device.device_id)
-                    if was_connected is False:
-                        self.memory.add_event(device.device_id, "connected", {"transport": device.transport})
-                    elif previous_device.identity.get("state") != device.identity.get("state"):
-                        if "state" in previous_device.identity or "state" in device.identity:
-                            self.memory.add_event(device.device_id, "state_changed", {
-                                "previous": previous_device.identity.get("state"),
-                                "current": device.identity.get("state"), "transport": device.transport})
-                    found.append({**device.to_dict(),
-                                  "previously_known": stored["first_seen"] != stored["last_seen"],
-                                  "configuration_changed": stored["configuration_changed"]})
-                successful_transports.add(adapter.transport)
-            except Exception as exc:
+        selected = [adapter for adapter in self.adapters
+                    if not transports or adapter.transport in transports]
+        outcomes: dict[int, tuple[list[Device] | None, Exception | None]] = {}
+        if selected:
+            with ThreadPoolExecutor(max_workers=min(16, len(selected)), thread_name_prefix="udmcp-discovery") as pool:
+                futures = {pool.submit(adapter.discover): adapter for adapter in selected}
+                for future in as_completed(futures):
+                    adapter = futures[future]
+                    try:
+                        outcomes[id(adapter)] = (future.result(), None)
+                    except Exception as exc:
+                        outcomes[id(adapter)] = (None, exc)
+        for adapter in selected:
+            devices, error = outcomes[id(adapter)]
+            if error is not None:
                 failed_transports.add(adapter.transport)
-                errors.append({"transport": adapter.transport, "error": str(exc)})
+                errors.append({"transport": adapter.transport, "error": str(error)})
+                continue
+            for device in devices or []:
+                stored = self.memory.save_device(device)
+                device.device_id = stored["device_id"]
+                previous_device = self._connected.get(device.device_id)
+                was_connected = previous_device is not None
+                self._connected[device.device_id] = device
+                present_ids.add(device.device_id)
+                if was_connected is False:
+                    self.memory.add_event(device.device_id, "connected", {"transport": device.transport})
+                elif previous_device.identity.get("state") != device.identity.get("state"):
+                    if "state" in previous_device.identity or "state" in device.identity:
+                        self.memory.add_event(device.device_id, "state_changed", {
+                            "previous": previous_device.identity.get("state"),
+                            "current": device.identity.get("state"), "transport": device.transport})
+                found.append({**device.to_dict(),
+                              "previously_known": stored["first_seen"] != stored["last_seen"],
+                              "configuration_changed": stored["configuration_changed"]})
+            successful_transports.add(adapter.transport)
         for device_id, device in list(self._connected.items()):
             if (device.transport in successful_transports and device.transport not in failed_transports
                     and device_id not in present_ids):
@@ -196,7 +212,7 @@ class DeviceService:
                 raise RuntimeError("Session limit reached (64 open interfaces)")
             self._pending_sessions += 1
         try:
-            self._enforce_policy(device, "open", None)
+            self._enforce_policy(device, "open", None, interface_id)
             handle = adapter.open_interface(device, interface_id, **(options or {}))
         except Exception:
             with self._session_lock:
@@ -259,16 +275,20 @@ class DeviceService:
     def access_policy() -> dict[str, Any]:
         policy_path = os.environ.get("UDMCP_POLICY")
         if not policy_path:
-            return {"path": None, "policy": {"denied_operations": [], "max_write_bytes": None}}
+            return {"path": None, "policy": {
+                "denied_operations": [], "allowed_operations": [],
+                "max_write_bytes": 4096}}
         with open(policy_path, encoding="utf-8") as handle:
             policy = json.load(handle)
         if not isinstance(policy, dict):
             raise ValueError("Access policy must be a JSON object")
         policy.setdefault("denied_operations", [])
-        policy.setdefault("max_write_bytes", None)
+        policy.setdefault("allowed_operations", [])
+        policy.setdefault("max_write_bytes", 4096)
         return {"path": policy_path, "policy": policy}
 
-    def _enforce_policy(self, device: Device, operation: str, data: bytes | None) -> None:
+    def _enforce_policy(self, device: Device, operation: str, data: bytes | None,
+                        interface_id: str | None = None) -> None:
         policy = self.access_policy()["policy"]
         denied = policy.get("denied_operations", [])
         if not isinstance(denied, list):
@@ -278,10 +298,30 @@ class DeviceService:
                 raise ValueError("Each denied_operations entry must be an object")
             if (rule.get("transport", "*") in ("*", device.transport) and
                 rule.get("operation", "*") in ("*", operation) and
-                rule.get("device_id", "*") in ("*", device.device_id, device.fingerprint)):
+                rule.get("device_id", "*") in ("*", device.device_id, device.fingerprint) and
+                rule.get("interface_id", "*") in ("*", interface_id)):
                 raise PermissionError(f"Blocked by local policy for {device.transport}/{operation}")
+        read_operations = {"read", "receive", "inspect"}
+        allowed = policy.get("allowed_operations", [])
+        if not isinstance(allowed, list):
+            raise ValueError("policy.allowed_operations must be a list")
+        explicitly_allowed = False
+        for rule in allowed:
+            if not isinstance(rule, dict):
+                raise ValueError("Each allowed_operations entry must be an object")
+            explicitly_allowed = explicitly_allowed or (
+                rule.get("transport") == device.transport and
+                rule.get("device_id") in (device.device_id, device.fingerprint) and
+                rule.get("operation") == operation and
+                rule.get("interface_id") == interface_id
+            )
+        if operation not in read_operations and not explicitly_allowed:
+            raise PermissionError(
+                f"Blocked by default-deny policy for {device.transport}/{operation}; "
+                "add an exact transport, device_id, interface_id and operation rule to UDMCP_POLICY"
+            )
         max_write = policy.get("max_write_bytes")
-        if data is not None and operation in {"write", "send", "communicate", "control_write"} and max_write is not None:
+        if data is not None and operation not in read_operations and max_write is not None:
             if not isinstance(max_write, int) or max_write < 0:
                 raise ValueError("policy.max_write_bytes must be a non-negative integer or null")
             if len(data) > max_write:
@@ -342,7 +382,7 @@ class DeviceService:
                     with self._session_lock:
                         if self._sessions.get(session_id) is not session:
                             raise KeyError(f"Unknown interface session: {session_id}")
-                self._enforce_policy(device, operation, data)
+                self._enforce_policy(device, operation, data, interface_id)
                 if session:
                     options["_session"] = session["handle"]
                 response = adapter.communicate(device, interface_id, operation, data=data, **options)
@@ -361,6 +401,44 @@ class DeviceService:
         if not success:
             raise RuntimeError(response["error"])
         return response
+
+    def communicate_many(self, targets: list[dict[str, Any]], operation: str) -> dict[str, Any]:
+        """Run independent read operations concurrently, preserving one result per exact target."""
+        if not isinstance(targets, list) or not targets or len(targets) > 32:
+            raise ValueError("targets must contain between 1 and 32 device/interface pairs")
+        if operation not in {"read", "receive"}:
+            raise PermissionError("Batch communication only permits read/receive; grouped writes are not supported")
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for target in targets:
+            if not isinstance(target, dict) or not isinstance(target.get("device_id"), str) or not isinstance(
+                target.get("interface_id"), str
+            ):
+                raise ValueError("Each target must include string device_id and interface_id fields")
+            key = (target["device_id"], target["interface_id"])
+            if key in seen:
+                raise ValueError(f"Duplicate device/interface target: {key[0]}/{key[1]}")
+            seen.add(key)
+            options = target.get("options", {})
+            if not isinstance(options, dict):
+                raise ValueError("Target options must be an object")
+            normalized.append({"device_id": key[0], "interface_id": key[1], "options": options})
+
+        results: list[dict[str, Any] | None] = [None] * len(normalized)
+        with ThreadPoolExecutor(max_workers=min(16, len(normalized)), thread_name_prefix="udmcp-batch") as pool:
+            futures = {
+                pool.submit(self.communicate, target["device_id"], target["interface_id"],
+                            operation, options=target["options"]): (index, target)
+                for index, target in enumerate(normalized)
+            }
+            for future in as_completed(futures):
+                index, target = futures[future]
+                try:
+                    results[index] = {**target, "ok": True, "response": future.result()}
+                except Exception as exc:
+                    results[index] = {**target, "ok": False, "error": str(exc)}
+        return {"operation": operation, "requested": len(normalized), "completed": len(results),
+                "results": results}
 
 
 service = DeviceService()
@@ -382,10 +460,6 @@ def _json(data: Any) -> dict[str, Any]:
 
 def _tool_annotations(*, read_only: bool, destructive: bool, idempotent: bool,
                       open_world: bool) -> Any:
-    values = {"readOnlyHint": read_only, "destructiveHint": destructive,
-              "idempotentHint": idempotent, "openWorldHint": open_world}
-    if not USING_OFFICIAL_SDK:
-        return values
     try:
         from mcp.types import ToolAnnotations
         fields = getattr(ToolAnnotations, "model_fields", {})
@@ -402,7 +476,7 @@ def _tool_annotations(*, read_only: bool, destructive: bool, idempotent: bool,
 def discover_devices(transports: list[str] | None = None) -> dict[str, Any]:
     """Discover connected devices using available USB, serial, BLE, Android ADB and iOS adapters.
 
-    Optionally restrict transports to usb, hid, serial, bluetooth, adb, ios or network. Optional adapter
+    Optionally restrict transports to usb, hid, serial, bluetooth, adb, ios, network or simulator. Optional adapter
     dependencies and OS access errors are reported per transport without stopping other scans.
     """
     return _json(service.discover(transports))
@@ -418,6 +492,8 @@ def get_runtime_status() -> dict[str, Any]:
     for adapter in service.adapters:
         dependency = modules.get(adapter.transport)
         available = bool(importlib.util.find_spec(dependency)) if dependency else True
+        if adapter.transport == "simulator":
+            available = True
         capabilities = None
         if adapter.transport == "adb":
             available = shutil.which("adb") is not None
@@ -433,7 +509,7 @@ def get_runtime_status() -> dict[str, Any]:
                          **({"capabilities": capabilities} if capabilities is not None else {}),
                          "adapter": type(adapter).__name__})
     return _json({"python": sys.version.split()[0], "platform": sys.platform,
-                  "mcp_runtime": "official SDK" if USING_OFFICIAL_SDK else "stdio fallback",
+                  "mcp_runtime": "official Python MCP SDK v2",
                   "database_path": str(service.memory.path), "adapters": adapters,
                   "plugin_errors": service.plugin_errors,
                   "tools": "generic interface I/O; physical capabilities depend on each adapter and OS"})
@@ -521,6 +597,17 @@ def communicate(device_id: str, interface_id: str, operation: str,
                                      session_id=session_id, **(options or {})))
 
 
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=True))
+def communicate_many(targets: list[dict[str, Any]], operation: str = "read") -> dict[str, Any]:
+    """Read from up to 32 explicitly listed device/interface pairs concurrently.
+
+    Each target receives its own success or error result. Only read and receive are accepted;
+    each device is resolved and checked independently, so identical models remain distinct.
+    """
+    return _json(service.communicate_many(targets, operation))
+
+
 @mcp.tool()
 def open_interface(device_id: str, interface_id: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
     """Open a persistent USB, HID, serial, TCP or UDP interface and return its session id."""
@@ -605,7 +692,7 @@ def device_profile_resource(device_id: str) -> str:
 
 def main() -> None:
     """Start the MCP server over stdio (the standard local desktop transport)."""
-    if os.environ.get("UDMCP_AUTO_MONITOR", "true").lower() not in {"0", "false", "no"}:
+    if os.environ.get("UDMCP_AUTO_MONITOR", "false").lower() in {"1", "true", "yes"}:
         service.start_monitor()
     try:
         mcp.run(transport="stdio")
