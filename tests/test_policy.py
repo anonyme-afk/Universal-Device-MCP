@@ -36,6 +36,32 @@ class FakeAdapter:
 
 
 class AccessPolicyTests(unittest.TestCase):
+    def test_media_capture_requires_local_owner_opt_in(self):
+        from universal_device_mcp.server import _require_media_capture
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(PermissionError, "disabled"):
+                _require_media_capture()
+
+    def test_access_modes_keep_safe_default_and_limit_full_mode(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        device = Device("camper", "fake", "Test", "fake:1")
+        with tempfile.TemporaryDirectory() as folder:
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({"max_write_bytes": 4}), encoding="utf-8")
+            env = {"UDMCP_POLICY": str(policy_path)}
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "safe"}):
+                with self.assertRaises(PermissionError):
+                    service._enforce_policy(device, "write", b"x", "if0")
+            trusted_policy = {"trusted_devices": ["fake:1"]}
+            policy_path.write_text(json.dumps(trusted_policy), encoding="utf-8")
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "trusted"}):
+                service._enforce_policy(device, "write", b"x", "if0")
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "full"}):
+                service._enforce_policy(device, "write", b"x", "if0")
+                with self.assertRaisesRegex(PermissionError, "blocked in every access mode"):
+                    service._enforce_policy(device, "firmware_update", None, "if0")
+
     def test_device_service_records_connect_and_disconnect(self):
         with tempfile.TemporaryDirectory() as folder:
             old_database = os.environ.get("UDMCP_DATABASE")

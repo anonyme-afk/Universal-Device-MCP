@@ -181,7 +181,9 @@ The same `uvx` configuration works on macOS and Linux when `uv` is on `PATH`. Fo
 | `get_device_knowledge(device_id)` | Return profile, discoveries and recent experiment history. |
 | `export_device_profile(device_id)` | Export one complete profile as JSON text. |
 | `forget_device(device_id)` | Delete one profile, discoveries and experiments. |
-| `get_access_policy()` | Show the local access policy currently applied to communication; mutating operations are default-deny without an exact allow rule. |
+| `get_access_policy()` | Show the local access mode (`safe`, `trusted`, or `full`) and active per-device policy. |
+| `discover_cameras(max_index?)` / `capture_camera_image(camera_index?)` | Explicitly probe cameras or capture one bounded JPEG in memory; camera access is disabled unless the owner sets `UDMCP_MEDIA_CAPTURE=true`. |
+| `discover_microphones()` / `record_audio_sample(duration_seconds?, device_index?)` | List audio inputs or explicitly capture at most 10 seconds of WAV in memory; capture is owner-enabled and never saved. |
 
 With the official MCP SDK, tools that return objects provide structured MCP output as well as readable text for clients that only consume text. Read-only resources are available at `udmcp://devices` and `udmcp://devices/{device_id}/profile`; the latter contains that device's saved profile, discoveries and retained experiment metadata. The repository includes [the V1 acceptance specification](docs/PRODUCT_V1.md) and [the V2 distributed-platform specification](docs/PRODUCT_V2.md). V2 includes the V1 product as its local node; neither specification is a claim that every release gate is already complete.
 
@@ -235,6 +237,14 @@ Writes and interface opening are denied unless `UDMCP_POLICY` points to a local 
 ```
 
 `max_write_bytes` defaults to 4096. An explicit write authorization does not mean an interactive confirmation was collected from the current MCP client; configure the local allowlist only for operations you intend to permit. Policy changes take effect on the next call. Monitoring is disabled by default; `UDMCP_AUTO_MONITOR=true` opts into automatic scans. BLE and mDNS discovery remain on demand.
+
+### Local access modes
+
+The computer owner may set `UDMCP_ACCESS_MODE` in the MCP server's local environment. The default is `safe`, which keeps exact per-device policy rules for mutations. `trusted` also permits the standard read/open/write operations for devices whose exact ID or fingerprint is listed in the local `UDMCP_POLICY` JSON `trusted_devices` array. `full` permits supported non-critical adapter operations without per-operation allow rules. Explicit deny rules, OS permissions, adapter limits, payload caps and audit history still apply in every mode. Firmware flashing, erase/wipe/format, delete/remove, arbitrary execute, factory reset and bootloader unlock operations are blocked in all three modes. The agent cannot change the process environment or select a mode through an MCP tool.
+
+### Camera and microphone capture
+
+Install media support with `pip install "universal-device-mcp[media]"` (or add `[media]` to the package extras used by your client). The computer owner must additionally set `UDMCP_MEDIA_CAPTURE=true`; otherwise capture tools fail closed. `discover_cameras` probes indexes only when explicitly called and may briefly turn cameras on. `capture_camera_image` returns one JPEG (up to 900 KB) in memory. `discover_microphones` lists input devices without opening them; `record_audio_sample` captures up to 10 seconds of mono 16 kHz WAV in memory. Captures are never written to disk or retained in device history. Windows/macOS privacy settings, Linux camera/audio services and drivers remain authoritative. Continuous video/audio streams, adjustable camera controls, image analysis, and transcription are not implemented in this initial capture release.
 
 ### Try without hardware
 

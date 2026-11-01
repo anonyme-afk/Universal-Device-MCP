@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import hmac
+import io
 import importlib.util
 import json
 import logging
@@ -14,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from datetime import datetime, timezone
@@ -292,11 +295,14 @@ class DeviceService:
 
     @staticmethod
     def access_policy() -> dict[str, Any]:
+        mode = os.environ.get("UDMCP_ACCESS_MODE", "safe").strip().lower()
+        if mode not in {"safe", "trusted", "full"}:
+            raise ValueError("UDMCP_ACCESS_MODE must be safe, trusted, or full")
         policy_path = os.environ.get("UDMCP_POLICY")
         if not policy_path:
             return {"path": None, "policy": {
                 "denied_operations": [], "allowed_operations": [],
-                "max_write_bytes": 4096}}
+                "max_write_bytes": 4096, "access_mode": mode}}
         with open(policy_path, encoding="utf-8") as handle:
             policy = json.load(handle)
         if not isinstance(policy, dict):
@@ -304,11 +310,16 @@ class DeviceService:
         policy.setdefault("denied_operations", [])
         policy.setdefault("allowed_operations", [])
         policy.setdefault("max_write_bytes", 4096)
+        policy["access_mode"] = mode
         return {"path": policy_path, "policy": policy}
 
     def _enforce_policy(self, device: Device, operation: str, data: bytes | None,
                         interface_id: str | None = None) -> None:
         policy = self.access_policy()["policy"]
+        critical_operations = {"flash", "firmware_update", "erase", "wipe", "format", "delete",
+                               "remove", "factory_reset", "bootloader_unlock", "execute"}
+        if operation.lower() in critical_operations:
+            raise PermissionError(f"Critical operation {operation!r} is blocked in every access mode")
         denied = policy.get("denied_operations", [])
         if not isinstance(denied, list):
             raise ValueError("policy.denied_operations must be a list")
@@ -334,9 +345,18 @@ class DeviceService:
                 rule.get("operation") == operation and
                 rule.get("interface_id") == interface_id
             )
-        if operation not in read_operations and not explicitly_allowed:
+        mode = policy["access_mode"]
+        trusted_devices = policy.get("trusted_devices", [])
+        trusted_operations = policy.get("trusted_operations", [
+            "open", "read", "receive", "write", "send", "communicate", "control_write"])
+        if not isinstance(trusted_devices, list) or not isinstance(trusted_operations, list):
+            raise ValueError("trusted_devices and trusted_operations must be arrays in UDMCP_POLICY")
+        trusted_match = device.device_id in trusted_devices or device.fingerprint in trusted_devices
+        if mode == "trusted" and operation in trusted_operations and trusted_match:
+            explicitly_allowed = True
+        if operation not in read_operations and not explicitly_allowed and mode != "full":
             raise PermissionError(
-                f"Blocked by default-deny policy for {device.transport}/{operation}; "
+                f"Blocked by {mode} policy for {device.transport}/{operation}; "
                 "add an exact transport, device_id, interface_id and operation rule to UDMCP_POLICY"
             )
         max_write = policy.get("max_write_bytes")
@@ -783,8 +803,117 @@ def get_device_events(after_id: int = 0, limit: int = 100) -> dict[str, Any]:
 @mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
                                         idempotent=True, open_world=False))
 def get_access_policy() -> dict[str, Any]:
-    """Show the optional local policy from UDMCP_POLICY; absent policy leaves operations unrestricted."""
+    """Show the locally selected access mode and policy; SAFE is the default."""
     return _json(service.access_policy())
+
+
+def _require_media_capture() -> None:
+    if os.environ.get("UDMCP_MEDIA_CAPTURE", "false").lower() not in {"1", "true", "yes"}:
+        raise PermissionError("Media capture is disabled; the computer owner must set UDMCP_MEDIA_CAPTURE=true")
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=True, open_world=True))
+def discover_cameras(max_index: int = 8) -> dict[str, Any]:
+    """Explicitly probe camera indexes; each probe may briefly activate that camera."""
+    _require_media_capture()
+    logger.info("Camera discovery explicitly requested (max index %s)", max_index)
+    if not 1 <= max_index <= 16:
+        raise ValueError("max_index must be between 1 and 16")
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("Camera support is optional; install universal-device-mcp[media]") from exc
+    cameras = []
+    for index in range(max_index):
+        camera = cv2.VideoCapture(index)
+        try:
+            if camera.isOpened():
+                cameras.append({"camera_id": f"opencv:{index}", "index": index})
+        finally:
+            camera.release()
+    return {"cameras": cameras, "count": len(cameras), "persisted": False}
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=False, open_world=True))
+def capture_camera_image(camera_index: int = 0) -> dict[str, Any]:
+    """Explicitly capture one bounded JPEG frame and return it inline as base64 without saving it."""
+    _require_media_capture()
+    logger.info("Single-frame camera capture explicitly requested (index %s)", camera_index)
+    if not 0 <= camera_index <= 15:
+        raise ValueError("camera_index must be between 0 and 15")
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("Camera support is optional; install universal-device-mcp[media]") from exc
+    camera = cv2.VideoCapture(camera_index)
+    try:
+        if not camera.isOpened():
+            raise RuntimeError(f"Could not open camera index {camera_index}; check OS privacy permissions")
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        ok, frame = camera.read()
+        if not ok or frame is None:
+            raise RuntimeError("Camera opened but did not return a frame")
+        height, width = frame.shape[:2]
+        encoded_ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if not encoded_ok or len(encoded) > 900_000:
+            raise RuntimeError("Could not encode a JPEG under the 900 KB response limit")
+        return {"camera_id": f"opencv:{camera_index}", "mime_type": "image/jpeg",
+                "width": width, "height": height,
+                "image_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+                "persisted": False}
+    finally:
+        camera.release()
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def discover_microphones() -> dict[str, Any]:
+    """List host audio input devices without opening a recording stream."""
+    logger.info("Microphone inventory explicitly requested")
+    try:
+        import sounddevice as sd
+    except ImportError as exc:
+        raise RuntimeError("Audio support is optional; install universal-device-mcp[media]") from exc
+    devices = []
+    for index, item in enumerate(sd.query_devices()):
+        if int(item.get("max_input_channels", 0)) > 0:
+            devices.append({"device_id": f"sounddevice:{index}", "index": index,
+                            "name": str(item.get("name", "")),
+                            "max_input_channels": int(item["max_input_channels"]),
+                            "default_samplerate": float(item.get("default_samplerate", 0))})
+    return {"microphones": devices, "count": len(devices)}
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=False, open_world=True))
+def record_audio_sample(duration_seconds: float = 3.0, device_index: int | None = None) -> dict[str, Any]:
+    """Explicitly record at most 10 seconds of mono 16 kHz WAV in memory; never saves or streams it."""
+    _require_media_capture()
+    logger.info("Bounded audio capture explicitly requested (duration %.2fs)", duration_seconds)
+    if not 0.25 <= duration_seconds <= 10:
+        raise ValueError("duration_seconds must be between 0.25 and 10")
+    if device_index is not None and not 0 <= device_index <= 255:
+        raise ValueError("device_index must be between 0 and 255")
+    try:
+        import numpy as np
+        import sounddevice as sd
+    except ImportError as exc:
+        raise RuntimeError("Audio support is optional; install universal-device-mcp[media]") from exc
+    samples = sd.rec(round(duration_seconds * 16_000), samplerate=16_000, channels=1,
+                     dtype="int16", device=device_index, blocking=True)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(np.asarray(samples, dtype=np.int16).tobytes())
+    audio = buffer.getvalue()
+    return {"device_index": device_index, "mime_type": "audio/wav", "sample_rate_hz": 16_000,
+            "channels": 1, "duration_seconds": duration_seconds,
+            "audio_base64": base64.b64encode(audio).decode("ascii"), "persisted": False}
 
 
 @mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,

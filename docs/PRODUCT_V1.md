@@ -10,6 +10,12 @@ An MCP client can discover devices exposed by supported host adapters, tell iden
 
 “Universal” describes the extensible adapter architecture. It is not a guarantee that all existing or future devices can be recognized or controlled.
 
+## Local access modes and media capture
+
+The owner-selected `UDMCP_ACCESS_MODE` supports `safe` (default, exact allowlist for mutations), `trusted` (configured exact device IDs/fingerprints plus an operation allowlist), and `full` (supported non-critical operations without per-operation rules). Selection is made in the local server environment and cannot be changed by an MCP tool. Explicit policy denies, the OS, adapter constraints and write-size limits apply in every mode. Firmware flashing, erase/wipe/format, delete/remove, arbitrary execute, factory reset and bootloader unlock remain blocked in every mode.
+
+Optional camera/audio support uses OpenCV and sounddevice. Capture requires owner configuration `UDMCP_MEDIA_CAPTURE=true` and an explicit tool call. The current release provides bounded single-frame JPEG capture and at most 10 seconds of in-memory WAV capture; it does not provide continuous streams, adjustable camera controls, transcription or image analysis. Captures are not retained on disk.
+
 ## Supported local scope
 
 | Transport | V1 support claim | Conditions and exclusions |
