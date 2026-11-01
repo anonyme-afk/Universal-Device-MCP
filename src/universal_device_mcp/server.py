@@ -41,6 +41,7 @@ from .adapters import (
 )
 from .adapters.base import Adapter
 from .adapters.simulator import SimulatorAdapter
+from .distributed import RemoteNodeRegistry, node_auth_from_environment
 from .memory import DeviceMemory
 from .models import Device
 from .payload_analysis import analyze_payload as analyze_bytes
@@ -625,7 +626,6 @@ class DeviceService:
 
 
 service = DeviceService()
-from .distributed import RemoteNodeRegistry, node_auth_from_environment
 
 _node_verifier, _node_auth = node_auth_from_environment()
 mcp_options: dict[str, Any] = {}

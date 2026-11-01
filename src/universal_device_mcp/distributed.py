@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass
@@ -12,6 +14,8 @@ from urllib.parse import urlsplit
 import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 
 
 @dataclass(frozen=True)
@@ -157,17 +161,11 @@ class EnvironmentTokenVerifier:
     """Constant-time verifier for one per-node secret supplied outside configuration files."""
 
     def __init__(self, expected_token: str, resource: str, scopes: list[str]) -> None:
-        import hashlib
-
         self._expected = hashlib.sha256(expected_token.encode()).digest()
         self._resource = resource
         self._scopes = scopes
 
     async def verify_token(self, token: str) -> Any:
-        import hashlib
-        import hmac
-        from mcp.server.auth.provider import AccessToken
-
         if not hmac.compare_digest(hashlib.sha256(token.encode()).digest(), self._expected):
             return None
         return AccessToken(token=token, client_id="udmcp-hub", scopes=self._scopes,
@@ -183,8 +181,6 @@ def node_auth_from_environment() -> tuple[Any, Any] | tuple[None, None]:
     if len(token) < 32 or not resource.startswith("https://"):
         raise RuntimeError("Node mode requires UDMCP_NODE_TOKEN (32+ characters) and an HTTPS UDMCP_RESOURCE_URL")
     scopes = [scope for scope in os.environ.get("UDMCP_NODE_SCOPES", "udmcp:read").split(",") if scope]
-    from mcp.server.auth.settings import AuthSettings
-
     verifier = EnvironmentTokenVerifier(token, resource, scopes)
     settings = AuthSettings(issuer_url="https://udmcp.invalid", resource_server_url=resource,
                            required_scopes=["udmcp:read"], validate_token_resource=True)
