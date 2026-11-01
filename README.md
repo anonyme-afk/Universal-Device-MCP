@@ -240,6 +240,20 @@ Writes and interface opening are denied unless `UDMCP_POLICY` points to a local 
 
 Set `UDMCP_ENABLE_SIMULATOR=true` in the MCP client's environment, then call `discover_devices` with `transports=["simulator"]` and `communicate_many` with the two returned IDs and `interface_id="telemetry"`. The simulator returns clearly marked sample data and does not touch physical hardware.
 
+## Multi-computer hub (V2 foundation)
+
+The local MCP can also act as an authenticated remote node. A hub aggregates inventory from a fixed list of nodes and can issue bounded parallel **reads only**. Remote write tools are intentionally not exposed; each node's local policy remains authoritative. This initial hub mode is single-tenant and uses a shared bearer token per node, not OIDC, mTLS, enrollment, or a distributed job queue. Put the node behind HTTPS before connecting over a network.
+
+On each node, set a random secret of at least 32 characters and start the server with `UDMCP_ROLE=node`, `UDMCP_TRANSPORT=streamable-http`, `UDMCP_NODE_TOKEN`, and `UDMCP_RESOURCE_URL` set to that node's HTTPS MCP URL. For a local smoke setup only, bind to `127.0.0.1` and use an `http://localhost:8000/mcp` resource URL is not accepted; node resources must be HTTPS. On a real host, terminate TLS at a trusted reverse proxy and set `UDMCP_HTTP_HOST=127.0.0.1` behind it. Node HTTP defaults to loopback and port 8000.
+
+On the hub, configure `UDMCP_REMOTE_NODES` as a JSON array and provide each token through the named environment variable (never put the secret in the JSON):
+
+```json
+[{"node_id":"workshop","organization_id":"default","site":"home","url":"https://device-host.example/mcp","token_env":"UDMCP_WORKSHOP_TOKEN"}]
+```
+
+The hub's MCP client can then call `list_remote_nodes`, `discover_remote_devices`, and `read_remote_devices`. The last tool requires exact `node_id`, `device_id`, and `interface_id` values from discovery; it accepts at most 32 unique targets and preserves per-device errors. Details and remaining V2 release requirements are tracked in [the V2 specification](docs/PRODUCT_V2.md).
+
 ## Development
 
 ```bash

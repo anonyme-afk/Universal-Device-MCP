@@ -1,6 +1,8 @@
 # Universal Device MCP 2.0 — Complete product specification
 
-Status: **target definition; not implemented or release-ready**.
+Status: **V2 foundation implemented; not a complete V2 release**.
+
+The current code adds a configured read-only hub for parallel inventory and reads from authenticated HTTP nodes. It is an initial distributed foundation and does not satisfy the full V2 target below. Missing release blockers include multi-tenant identity/authorization, node enrollment and revocation, mTLS or managed OAuth, persistent central inventory/job storage, offline synchronization, workflows/queueing, fleet observability, web console/API/CLI/SDK, signed upgrades, and measured fleet capacity. Do not describe the repository as a complete V2 platform until those requirements and the mandatory V1 gates have evidence.
 
 V2 is the final distributed product and includes the entire V1 local-device feature set as its node runtime. The V1 acceptance requirements in [PRODUCT_V1.md](PRODUCT_V1.md) remain mandatory gates inside this V2 release; V1 is not a prerequisite release that the user must install separately. A node remains the only component that directly controls its attached hardware. The hub coordinates authorized nodes; it does not bypass device permissions, transport drivers or node-local policy.
 
