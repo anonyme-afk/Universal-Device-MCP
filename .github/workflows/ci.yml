@@ -23,7 +23,9 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[all,dev]"
       - name: Run tests
-        run: python -m pytest -q --junitxml=pytest-results.xml
+        run: timeout 900 python -m pytest -q --junitxml=pytest-results.xml
+        env:
+          UDMCP_AUTO_MONITOR: 'false'
       - name: Annotate failed tests
         if: failure()
         run: python .github/scripts/annotate_pytest_failures.py pytest-results.xml
