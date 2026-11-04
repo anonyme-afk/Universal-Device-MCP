@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  unit-tests:
+  test:
     strategy:
       fail-fast: false
       matrix:
@@ -18,9 +18,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
-      - name: Run unit tests (no hardware)
-        run: python -m pytest -q --junitxml=pytest-results.xml
+      - run: python -m pip install -e ".[all,dev]"
+      - name: Run tests
+        run: python -m pytest -q --junitxml=pytest-results.xml -x
         env:
           UDMCP_AUTO_MONITOR: 'false'
           UDMCP_MEDIA_CAPTURE: 'false'
@@ -29,33 +29,13 @@ jobs:
         run: python .github/scripts/annotate_pytest_failures.py pytest-results.xml
         continue-on-error: true
       - run: python -m ruff check src tests
-
-  integration-tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.11']
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.19.0'
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[all,dev,media]"
-      - name: Run integration tests (with hardware)
-        run: python -m pytest -q -m hardware --junitxml=pytest-results.xml
+      - name: MCP Inspector protocol smoke test
+        run: |
+          npx --yes @modelcontextprotocol/inspector --cli python -m universal_device_mcp.server --method tools/list --format json | python -c "import json,sys; names={tool['name'] for tool in json.load(sys.stdin)['result']['tools']}; assert {'discover_devices','communicate_many','get_access_policy','create_device_group','prepare_group_write','execute_approved_group_write','run_device_diagnostics'} <= names, names"
         env:
           UDMCP_AUTO_MONITOR: 'false'
-          UDMCP_MEDIA_CAPTURE: 'true'
-      - name: Annotate failed tests
-        if: failure()
-        run: python .github/scripts/annotate_pytest_failures.py pytest-results.xml
-        continue-on-error: true
+          UDMCP_ENABLE_SIMULATOR: 'true'
+          UDMCP_DATABASE: ${{ runner.temp }}/udmcp-ci.sqlite3
       - name: MCP Inspector protocol smoke test
         run: |
           npx --yes @modelcontextprotocol/inspector --cli python -m universal_device_mcp.server --method tools/list --format json | python -c "import json,sys; names={tool['name'] for tool in json.load(sys.stdin)['result']['tools']}; assert {'discover_devices','communicate_many','get_access_policy','create_device_group','prepare_group_write','execute_approved_group_write','run_device_diagnostics'} <= names, names"
