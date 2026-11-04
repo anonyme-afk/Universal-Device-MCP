@@ -52,7 +52,21 @@ from .payload_analysis import analyze_payload as analyze_bytes
 _MAX_PAYLOAD_BYTES = 1024 * 1024
 _MAX_GROUP_WRITE_TARGETS = 32
 _MAX_GROUP_WRITE_BYTES = 4096
+_MEDIA_CAPTURE_TIMEOUT_SECONDS = 15
 logger = logging.getLogger("universal_device_mcp")
+
+
+def _run_with_timeout(func, timeout_seconds: int, *args, **kwargs):
+    """Run a function in a thread with a hard timeout to avoid hanging forever
+    on hardware I/O (camera, microphone) that never responds."""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="udmcp-media-timeout") as pool:
+        future = pool.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            future.cancel()
+            raise TimeoutError(f"Media operation timed out after {timeout_seconds}s")
 
 
 def _load_plugin_adapters() -> tuple[list[Adapter], list[dict[str, str]]]:
