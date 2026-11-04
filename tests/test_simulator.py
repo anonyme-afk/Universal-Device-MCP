@@ -109,7 +109,9 @@ class SimulatorTests(unittest.TestCase):
             service = DeviceService(DeviceMemory(Path(folder) / "devices.sqlite3"), [adapter])
             service.discover(["simulator"])
             group = service.memory.create_group("all sensors", {"model": "UDMCP-Sensor"})
-            with self.assertRaisesRegex(PermissionError, "default-deny"):
+            with self.assertRaisesRegex(
+                PermissionError, r"Blocked by .* policy for .*/write"
+            ):
                 service.prepare_group_write(group["group_id"], "telemetry", "write", "CAFE")
             self.assertEqual([], adapter.writes)
 
