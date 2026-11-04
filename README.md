@@ -302,6 +302,27 @@ my_transport = "my_package.adapter:MyAdapter"
 - **MCP server will not start:** verify the client launches the same Python environment where the `mcp` package is installed; inspect the MCP client's stderr/logs.
 - **Profile database location:** set `UDMCP_DATABASE` to an absolute writable file path.
 
+## Workflow pour agents IA
+
+Un guide d'instructions réutilisable est disponible dans [WORKFLOW.md](./WORKFLOW.md). Il explique, étape par étape, comment un agent IA doit :
+
+1. Découvrir le matériel connecté (`discover_devices`, `discover_wireless_devices`).
+2. Inspecter les interfaces et capacités d'un appareil (`inspect_device`, `explain_device_interface`, `get_device_capabilities`).
+3. Sélectionner l'outil MCP approprié selon l'objectif.
+4. Exécuter des opérations de manière sécurisée en respectant les modes d'accès (`safe`, `trusted`, `full`).
+5. Vérifier le succès de chaque opération.
+6. Gérer les erreurs, les appareils indisponibles et les opérations non supportées.
+
+Des scénarios concrets sont disponibles dans le répertoire [`workflows/`](./workflows/) :
+- [hardware-discovery.md](./workflows/hardware-discovery.md)
+- [interface-inspection.md](./workflows/interface-inspection.md)
+- [device-interaction.md](./workflows/device-interaction.md)
+- [device-monitoring.md](./workflows/device-monitoring.md)
+- [camera-capture.md](./workflows/camera-capture.md)
+- [audio-capture.md](./workflows/audio-capture.md)
+
+Ce workflow est indépendant de toute plateforme IA ou marketplace et peut être adapté à tout client MCP compatible.
+
 ## Roadmap
 
 Structured USB HID report-descriptor parsing, discovery of non-advertising network devices, Bluetooth Classic, camera/microphone OS APIs, broader protocol/documentation knowledge sources, GUI, and richer import workflows remain planned. Automatic proprietary protocol discovery is inherently uncertain and is not claimed as a completed feature.
