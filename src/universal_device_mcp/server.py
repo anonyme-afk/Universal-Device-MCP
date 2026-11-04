@@ -6,8 +6,8 @@ import base64
 import copy
 import hashlib
 import hmac
-import io
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -18,6 +18,7 @@ import time
 import uuid
 import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -59,7 +60,6 @@ logger = logging.getLogger("universal_device_mcp")
 def _run_with_timeout(func, timeout_seconds: int, *args, **kwargs):
     """Run a function in a thread with a hard timeout to avoid hanging forever
     on hardware I/O (camera, microphone) that never responds."""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="udmcp-media-timeout") as pool:
         future = pool.submit(func, *args, **kwargs)
         try:
