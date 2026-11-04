@@ -406,8 +406,8 @@ class DeviceService:
 
         Works for any transport; does not remove the device profile or its history.
         """
+        self._close_sessions_for(device_id)
         with self._session_lock:
-            self._close_sessions_for(device_id)
             self._connected.pop(device_id, None)
         self.memory.add_event(device_id, "disconnected", {})
         return {"device_id": device_id, "connected": False}
