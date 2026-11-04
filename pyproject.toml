@@ -22,7 +22,7 @@ network = ["zeroconf>=0.132"]
 hid = ["hidapi>=0.14"]
 ios = ["pymobiledevice3>=4.0", "pyusb>=1.2"]
 media = ["opencv-python-headless>=4.10", "sounddevice>=0.5", "numpy>=1.26"]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-timeout>=2.2", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 all = ["pyusb>=1.2", "pyserial>=3.5", "bleak>=0.22", "zeroconf>=0.132", "hidapi>=0.14",
        "pymobiledevice3>=4.0"]
 
@@ -41,5 +41,4 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
-timeout = 60
 
