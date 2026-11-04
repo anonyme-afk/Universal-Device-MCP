@@ -380,6 +380,38 @@ class DeviceService:
             raise RuntimeError(f"No adapter is registered for transport {device.transport!r}")
         return device, adapter
 
+    def connect_device(self, device_id: str) -> dict[str, Any]:
+        """Mark a known device as connected for generic interface operations.
+
+        Works for any transport once the device has been discovered and remembered.
+        Does not bypass OS permissions, pairing or adapter constraints.
+        """
+        stored = self.memory.get_device(device_id)
+        if stored is None:
+            raise KeyError(f"Unknown device {device_id!r}. Run discover_devices first.")
+        adapter = next((a for a in self.adapters if a.transport == stored["transport"]), None)
+        if adapter is None:
+            raise RuntimeError(f"No adapter is registered for transport {stored['transport']!r}")
+        dev = Device(device_id=stored["device_id"], transport=stored["transport"],
+                     name=stored["name"], fingerprint=stored["fingerprint"],
+                     identity=stored["identity"], hardware=stored["hardware"],
+                     interfaces=stored["interfaces"], connected=True)
+        with self._session_lock:
+            self._connected[device_id] = dev
+        self.memory.add_event(device_id, "connected", {"transport": stored["transport"]})
+        return {"device_id": device_id, "connected": True, "transport": stored["transport"]}
+
+    def disconnect_device(self, device_id: str) -> dict[str, Any]:
+        """Close all open interface sessions and mark a device as disconnected.
+
+        Works for any transport; does not remove the device profile or its history.
+        """
+        with self._session_lock:
+            self._close_sessions_for(device_id)
+            self._connected.pop(device_id, None)
+        self.memory.add_event(device_id, "disconnected", {})
+        return {"device_id": device_id, "connected": False}
+
     def inspect(self, device_id: str) -> dict[str, Any]:
         device, adapter = self._device(device_id)
         inspector = getattr(adapter, "inspect", None)
@@ -924,10 +956,10 @@ def inspect_device(device_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def communicate(device_id: str, interface_id: str, operation: str,
-                data_hex: str | None = None, session_id: str | None = None,
-                options: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Perform a generic transport operation. Payload bytes are supplied as hexadecimal.
+def communicate_device(device_id: str, interface_id: str, operation: str,
+                       data_hex: str | None = None, session_id: str | None = None,
+                       options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Perform a generic transport operation on a device. Payload bytes are supplied as hexadecimal.
 
     Serial supports read/write/send/receive. USB supports read/write plus control_read and
     control_write; endpoints, lengths and USB control setup fields belong in options.
@@ -1189,6 +1221,52 @@ def forget_device(device_id: str) -> dict[str, Any]:
     service._close_sessions_for(canonical_id)
     service._connected.pop(canonical_id, None)
     return _json({"deleted": canonical_id})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def reload_access_policy() -> dict[str, Any]:
+    """Reload the local access policy from UDMCP_POLICY without changing the access mode.
+
+    Only the computer owner can change UDMCP_ACCESS_MODE; this tool refreshes the
+    policy rules from the local policy file. The agent cannot select or change the
+    access mode through an MCP tool.
+    """
+    return _json(service.access_policy())
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=False, open_world=False))
+def connect_device(device_id: str) -> dict[str, Any]:
+    """Mark a known device as connected for generic interface operations.
+
+    Works for any transport once the device has been discovered and remembered.
+    Does not bypass OS permissions, pairing or adapter constraints.
+    """
+    return _json(service.connect_device(device_id))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                        idempotent=False, open_world=False))
+def disconnect_device(device_id: str) -> dict[str, Any]:
+    """Close all open interface sessions and mark a device as disconnected.
+
+    Works for any transport; does not remove the device profile or its history.
+    """
+    return _json(service.disconnect_device(device_id))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=True,
+                                        idempotent=False, open_world=False))
+def delete_device_experiment(device_id: str, experiment_id: int) -> dict[str, Any]:
+    """Delete one recorded communication experiment for a device by its ID.
+
+    Granular deletion of history without removing the whole device profile.
+    """
+    ok = service.memory.delete_experiment(device_id, experiment_id)
+    if not ok:
+        raise KeyError(f"Unknown experiment {experiment_id} for device {device_id!r}")
+    return _json({"deleted": experiment_id, "device_id": device_id})
 
 
 @mcp.resource("udmcp://devices", name="Known device profiles",

@@ -169,7 +169,7 @@ The same `uvx` configuration works on macOS and Linux when `uv` is on `PATH`. Fo
 | `get_device_events(after_id?, limit?)` | Read persistent connect/disconnect events after a cursor. |
 | `inspect_device(device_id)` | Return stored identity/interfaces and query transport-specific details. |
 | `open_interface(device_id, interface_id, options?)` / `close_interface(session_id)` | Open or release a persistent USB, HID, serial, TCP or UDP interface session. |
-| `communicate(device_id, interface_id, operation, data_hex?, session_id?, options?)` | Generic low-level transport I/O; iOS commands use an argv array and are pinned to the selected UDID. Bytes use hexadecimal strings; an open session can be reused where supported. |
+| `communicate_device(device_id, interface_id, operation, data_hex?, session_id?, options?)` | Generic low-level transport I/O on a device; iOS commands use an argv array and are pinned to the selected UDID. Bytes use hexadecimal strings; an open session can be reused where supported. |
 | `communicate_many(targets, operation="read")` | Concurrent read/receive on up to 32 exact device/interface pairs (bounded to 16 active reads); results and failures stay separate per target. |
 | `create_device_group(name, selector)` / `list_device_groups()` / `inspect_device_group(group_id)` / `delete_device_group(group_id)` | Save and inspect selector-based groups while preserving each device's own identity. |
 | `read_device_group(group_id, interface_id, operation="read", options?)` | Read/receive from connected and remembered group members concurrently; disconnected and failed targets get individual results. |
@@ -181,6 +181,10 @@ The same `uvx` configuration works on macOS and Linux when `uv` is on `PATH`. Fo
 | `get_device_knowledge(device_id)` | Return profile, discoveries and recent experiment history. |
 | `export_device_profile(device_id)` | Export one complete profile as JSON text. |
 | `forget_device(device_id)` | Delete one profile, discoveries and experiments. |
+| `reload_access_policy()` | Reload the local access policy from the `UDMCP_POLICY` file without changing the access mode (`safe`/`trusted`/`full`). Only the computer owner selects the mode. |
+| `connect_device(device_id)` | Mark a known device as connected for generic interface operations on any transport. Does not bypass OS permissions, pairing or adapter constraints. |
+| `disconnect_device(device_id)` | Close all open interface sessions and mark a device as disconnected. Does not remove the profile or its history. |
+| `delete_device_experiment(device_id, experiment_id)` | Delete one recorded communication experiment for a device by its ID; granular history deletion without removing the whole profile. |
 | `get_access_policy()` | Show the local access mode (`safe`, `trusted`, or `full`) and active per-device policy. |
 | `discover_cameras(max_index?)` / `capture_camera_image(camera_index?)` | Explicitly probe cameras or capture one bounded JPEG in memory; camera access is disabled unless the owner sets `UDMCP_MEDIA_CAPTURE=true`. |
 | `discover_microphones()` / `record_audio_sample(duration_seconds?, device_index?)` | List audio inputs or explicitly capture at most 10 seconds of WAV in memory; capture is owner-enabled and never saved. |
@@ -193,7 +197,7 @@ First call `discover_devices`, then use the returned `device_id` and `interface_
 
 For cable-free Android access, enable **Developer options → Wireless debugging** on the phone and put it on the same Wi-Fi network as the computer. Call `discover_wireless_devices`; when the phone shows a pairing service, pass its exact endpoint and the six-digit code shown on the phone to `pair_android_over_wifi`. Then discover again and call `connect_android_over_wifi` with the advertised TLS connect endpoint. The device must authorize the workstation; afterward it appears in ordinary ADB discovery and supports the same inspection and shell tools as a USB-connected phone. The server does not scan arbitrary IP addresses. Android's official ADB guidance requires pairing and mDNS discovery on the same network: [Wireless debugging requirements](https://developer.android.com/tools/adb).
 
-BLE devices can also be discovered with `discover_wireless_devices` or `discover_devices(transports=["bluetooth"])`. Use `inspect_device` to enumerate GATT services and characteristics, then `communicate` with the characteristic UUID as the interface. This supports BLE GATT; Bluetooth Classic profiles require a separate adapter.
+BLE devices can also be discovered with `discover_wireless_devices` or `discover_devices(transports=["bluetooth"])`. Use `inspect_device` to enumerate GATT services and characteristics, then `communicate_device` with the characteristic UUID as the interface. This supports BLE GATT; Bluetooth Classic profiles require a separate adapter.
 
 ### iPhone and iPad
 

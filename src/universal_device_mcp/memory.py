@@ -304,6 +304,21 @@ class DeviceMemory:
             return {"experiments": max(0, experiments), "events": max(0, events),
                     "snapshots": max(0, snapshots)}
 
+    def delete_experiment(self, device_id: str, experiment_id: int) -> bool:
+        """Delete one recorded communication experiment for a device by its ID.
+
+        Granular deletion of history without removing the whole device profile.
+        """
+        with self._connect() as con:
+            row = con.execute("SELECT device_id FROM devices WHERE device_id=? OR fingerprint=?",
+                              (device_id, device_id)).fetchone()
+            if not row:
+                return False
+            did = row["device_id"]
+            cursor = con.execute("DELETE FROM experiments WHERE experiment_id=? AND device_id=?",
+                                 (experiment_id, did))
+            return cursor.rowcount > 0
+
     def get_knowledge(self, device_id: str) -> dict[str, Any]:
         with self._connect() as con:
             row = con.execute("SELECT device_id FROM devices WHERE device_id=? OR fingerprint=?", (device_id, device_id)).fetchone()
