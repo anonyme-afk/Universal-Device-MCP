@@ -1,6 +1,6 @@
 # Workflow Universal Device MCP pour agents IA
 
-Ce document est une couche d'instructions réutilisable entre un agent IA et le serveur **Universal Device MCP**. Il est indépendant de toute plateforme (Agensi, Claude, OpenAI, etc.) et ne dépend d'aucun marketplace spécifique.
+Ce document est une couche d'instructions réutilisable entre un agent IA et le serveur **Universal Device MCP**. Il est indépendant de toute plateforme ( Claude, OpenAI, etc.) et ne dépend d'aucun marketplace spécifique.
 
 ## Objectif
 
