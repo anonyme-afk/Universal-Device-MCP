@@ -19,6 +19,7 @@ Utilisez ce serveur lorsque vous devez :
 - Conserver un inventaire persistant des appareils découverts entre sessions.
 - Exécuter des opérations sur plusieurs appareils simultanément (lectures indépendantes).
 - Contrôler des appareils simulés pour des tests sans matériel physique.
+- Interagir avec des nœuds MCP distants (mode hub/node).
 
 **N'utilisez pas ce serveur pour :**
 - Contrôler du matériel dont le protocole est inconnu et non documenté (le serveur ne devine pas les formats propriétaires).
@@ -31,33 +32,33 @@ Utilisez ce serveur lorsque vous devez :
 
 Avant toute découverte, vérifiez que le serveur fonctionne et que les adaptateurs sont disponibles.
 
-**Outil :** `get_runtime_status`
+**Outil :** `get_runtime_status()`
 
 Ce que vous obtenez :
 - Version Python et plateforme OS.
 - État de chaque adaptateur (USB, HID, Serial, Bluetooth, Network, iOS, ADB).
 - Chemin de la base de données locale.
-- Erreurs de chargement de plugins éventuelles.
+- Erreurs de chargement de plugins éventuels.
 
 ### Étape 2 — Découvrir les appareils locaux
 
-**Outil :** `discover_devices`
+**Outil :** `discover_devices(transports?)`
 
-Vous pouvez filtrer par transport (ex: `transports=["usb"]`, `transports=["bluetooth"]`, `transports=["serial"]`).
+Paramètre optionnel `transports` : tableau de chaînes (ex: `["usb"]`, `["bluetooth"]`, `["serial"]`). Transports supportés : usb, hid, serial, bluetooth, adb, ios, network, simulator.
 
 Résultat : une liste d'appareils avec `device_id`, `transport`, `name`, `fingerprint`, `identity`, `hardware`, `interfaces`.
 
 ### Étape 3 — Découvrir les appareils sans fil (optionnel)
 
-**Outil :** `discover_wireless_devices`
+**Outil :** `discover_wireless_devices()`
 
-Découvre les services BLE, mDNS, Android ADB et iOS mobdev2 annoncés localement.
+Découvre les services BLE, mDNS, Android ADB et iOS mobdev2 annoncés localement. Aucun paramètre.
 
 ### Étape 4 — Lister les appareils déjà connus
 
-**Outil :** `list_known_devices`
+**Outil :** `list_known_devices()`
 
-Retourne les profils enregistrés dans la base de données locale SQLite.
+Retourne les profils enregistrés dans la base de données locale SQLite. Aucun paramètre.
 
 ## 2. Inspection des capacités d'un appareil
 
@@ -73,19 +74,19 @@ Résultat : profil complet avec interfaces, état de connexion et métadonnées.
 
 **Outil :** `explain_device_interface(device_id, interface_id)`
 
-Donne une description lisible de ce que fait une interface et quelles opérations elle supporte.
+Donne une description lisible de ce que fait une interface sans prétendre que son protocole est compris.
 
 ### Étape 3 — Voir les capacités globales
 
 **Outil :** `get_device_capabilities(device_id)`
 
-Résumé des capacités de l'appareil.
+Résumé des interfaces observées et des découvertes de protocole enregistrées avec leurs labels de confiance.
 
 ### Étape 4 — Voir les protocoles supportés
 
 **Outil :** `get_supported_protocols()`
 
-Liste des protocoles et transports supportés par le serveur.
+Liste les implémentations de transport disponibles et leurs classes d'adaptateur.
 
 ## 3. Sélection de l'outil MCP approprié
 
@@ -128,8 +129,13 @@ Utilisez ce tableau pour choisir l'outil selon votre objectif :
 | Analyser une charge utile | `analyze_payload` | Lecture |
 | Générer un rapport | `generate_device_report` | Lecture |
 | Diagnostics | `run_device_diagnostics` | Lecture |
-| Démarrer le moniteur | `start_device_monitor` | Écriture (surveillance) |
-| Arrêter le moniteur | `stop_device_monitor` | Écriture (surveillance) |
+| Démarrer le moniteur | `start_device_monitor(interval_seconds?)` | Écriture (surveillance) |
+| Arrêter le moniteur | `stop_device_monitor()` | Écriture (surveillance) |
+| Nœud distant : lister | `list_remote_nodes()` | Lecture |
+| Nœud distant : découvrir | `discover_remote_devices()` | Lecture |
+| Nœud distant : lire | `read_remote_devices(targets, operation?)` | Lecture |
+| Android Wi-Fi : appairer | `pair_android_over_wifi(endpoint, pairing_code)` | Écriture |
+| Android Wi-Fi : connecter | `connect_android_over_wifi(endpoint)` | Écriture |
 
 ## 4. Exécution sécurisée d'une opération
 
@@ -148,8 +154,51 @@ Le mode est défini localement par le propriétaire de l'ordinateur via la varia
 | Mode | Comportement |
 |------|-------------|
 | `safe` (défaut) | Lectures autorisées. Écritures bloquées sans règle exacte (transport, device_id, interface_id, opération). |
-| `trusted` | Lectures, ouvertures et écritures autorisées pour les appareils dont l'ID/empreinte figure dans `trusted_devices` de la politique locale. |
+| `trusted` | Lectures toujours autorisées. Écritures/ouvertures autorisées si l'appareil figure dans `trusted_devices` ET l'opération figure dans `trusted_operations` (défaut: open, read, receive, write, send, communicate, control_write), ou si une règle `allowed_operations` exacte correspond. |
 | `full` | Opérations non critiques sans règle par opération, mais limites de taille, refus explicites, audit et blocages d'opérations critiques conservés. |
+
+## MCP Resources
+
+Le serveur expose deux ressources MCP (lecture seule, accessibles via `read_resource`) :
+
+| Resource | Description |
+|----------|-------------|
+| `udmcp://devices` | Inventaire local des appareils connus et profils techniques mémorisés (JSON). |
+| `udmcp://devices/{device_id}/profile` | Profil d'un appareil, ses découvertes, expériences et historique (JSON). |
+
+## Configuration variables d'environnement
+
+| Variable | Valeurs | Description |
+|----------|---------|-------------|
+| `UDMCP_ACCESS_MODE` | `safe` (défaut), `trusted`, `full` | Mode d'accès sélectionné par le propriétaire local. |
+| `UDMCP_POLICY` | Chemin fichier JSON | Chemin vers le fichier de politique d'accès locale. |
+| `UDMCP_DATABASE` | Chemin fichier | Chemin de la base de données SQLite des profils d'appareils. |
+| `UDMCP_MEDIA_CAPTURE` | `true` (opt-in) | Active la capture caméra/microphone. Requis pour `discover_cameras`, `capture_camera_image`, `discover_microphones`, `record_audio_sample`. |
+| `UDMCP_AUTO_MONITOR` | `false` (défaut), `true` | Démarre automatiquement le moniteur de connexion au lancement. |
+| `UDMCP_STORE_PAYLOADS` | `false` (défaut), `true` | Conserve les charges utiles des expériences en base de données. |
+| `UDMCP_RETENTION_DAYS` | Nombre (défaut: 30) | Durée de rétention de l'historique des événements. |
+| `UDMCP_ROLE` | `standalone` (défaut), `node`, `hub` | Rôle du serveur dans une architecture multi-nœuds. |
+| `UDMCP_TRANSPORT` | `stdio` (défaut), `streamable-http` | Transport de communication du serveur MCP. |
+| `UDMCP_HTTP_HOST` | `127.0.0.1` (défaut) | Hôte pour le transport HTTP. |
+| `UDMCP_HTTP_PORT` | `8000` (défaut) | Port pour le transport HTTP. |
+
+### Format du fichier de politique (UDMCP_POLICY)
+
+```json
+{
+  "denied_operations": [
+    { "transport": "usb", "operation": "write", "device_id": "*", "interface_id": "*" }
+  ],
+  "allowed_operations": [
+    { "transport": "usb", "device_id": "usb:1", "interface_id": "bulk-out", "operation": "write" }
+  ],
+  "trusted_devices": ["usb:1", "fingerprint:abc123"],
+  "trusted_operations": ["open", "read", "receive", "write", "send", "communicate", "control_write"],
+  "max_write_bytes": 4096
+}
+```
+
+Les règles utilisent `*` comme joker pour transport, operation, device_id et interface_id.
 
 ### Opérations bloquées dans tous les modes
 
