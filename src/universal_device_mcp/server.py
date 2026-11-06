@@ -50,6 +50,7 @@ from .memory import DeviceMemory
 from .models import Device
 from .payload_analysis import analyze_payload as analyze_bytes
 from .policy import (
+    DESTRUCTIVE_OPERATIONS,
     enforce_access_policy,
     load_access_policy,
     require_media_capture,
@@ -116,6 +117,8 @@ class DeviceService:
         self._session_lock = threading.Lock()
         self._pending_group_writes: dict[str, dict[str, Any]] = {}
         self._group_write_lock = threading.Lock()
+        self._pending_destructive_approvals: dict[str, dict[str, Any]] = {}
+        self._destructive_approval_lock = threading.Lock()
 
     def discover(self, transports: list[str] | None = None) -> dict[str, Any]:
         with self._scan_lock:
@@ -407,6 +410,7 @@ class DeviceService:
                     with self._session_lock:
                         if self._sessions.get(session_id) is not session:
                             raise KeyError(f"Unknown interface session: {session_id}")
+                self._require_destructive_approval(device, operation, interface_id, data_hex)
                 self._enforce_policy(device, operation, data, interface_id)
                 if session:
                     options["_session"] = session["handle"]
@@ -619,6 +623,110 @@ class DeviceService:
                 "operation": plan["operation"], "requested": len(plan["targets"]),
                 "completed": len(outcomes), "results": outcomes,
                 "atomic": False, "note": "Results are per target; completed hardware actions cannot be rolled back."}
+
+    def _require_destructive_approval(
+        self,
+        device: Device,
+        operation: str,
+        interface_id: str | None,
+        data: bytes | None,
+    ) -> None:
+        """Require a one-time explicit approval for destructive operations in unrestricted mode.
+
+        In unrestricted mode, critical operations are no longer blanket-blocked,
+        but each destructive operation still requires an explicit, one-time human
+        approval obtained through ``authorize_destructive_operation``. The AI
+        cannot grant this approval itself.
+        """
+        policy = load_access_policy()["policy"]
+        if policy["access_mode"] != "unrestricted":
+            return
+        if operation.lower() not in DESTRUCTIVE_OPERATIONS:
+            return
+        data_hex = data.hex() if data else None
+        with self._destructive_approval_lock:
+            now = time.monotonic()
+            self._pending_destructive_approvals = {
+                key: item for key, item in self._pending_destructive_approvals.items()
+                if item["expires_at_monotonic"] > now
+            }
+            for key, item in self._pending_destructive_approvals.items():
+                if (item["device_id"] == device.device_id
+                        and item["operation"].lower() == operation.lower()
+                        and item["interface_id"] == interface_id
+                        and item["data_hex"] == data_hex):
+                    self._pending_destructive_approvals.pop(key, None)
+                    return
+        raise PermissionError(
+            f"Destructive operation {operation!r} on {device.device_id} requires an "
+            "explicit one-time approval via authorize_destructive_operation "
+            "(the AI cannot grant this approval itself).")
+
+    def authorize_destructive_operation(
+        self,
+        device_id: str,
+        operation: str,
+        interface_id: str | None = None,
+        data_hex: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a one-time explicit approval for a destructive operation.
+
+        Only valid in unrestricted access mode. The approval expires after
+        120 seconds and is consumed the first time the matching operation runs.
+        The AI cannot call this to bypass safety; it records an owner-initiated
+        intent that the human user has explicitly requested.
+        """
+        policy = load_access_policy()["policy"]
+        if policy["access_mode"] != "unrestricted":
+            raise PermissionError(
+                "Destructive operation authorization is only available in unrestricted access mode")
+        if operation.lower() not in DESTRUCTIVE_OPERATIONS:
+            raise ValueError(f"Operation {operation!r} is not a destructive operation")
+        if data_hex is not None:
+            if not isinstance(data_hex, str) or len(data_hex) > _MAX_PAYLOAD_BYTES * 2:
+                raise ValueError(f"data_hex must be a string no larger than {_MAX_PAYLOAD_BYTES} bytes")
+            try:
+                bytes.fromhex(data_hex)
+            except ValueError as exc:
+                raise ValueError("data_hex must contain valid hexadecimal bytes") from exc
+
+        stored = self.memory.get_device(device_id)
+        if stored is None:
+            raise KeyError(f"Unknown device {device_id!r}. Run discover_devices first.")
+
+        approval_id = f"destructive-approval-{uuid.uuid4().hex}"
+        expires_at = time.monotonic() + 120
+        record = {
+            "approval_id": approval_id,
+            "device_id": device_id,
+            "operation": operation,
+            "interface_id": interface_id,
+            "data_hex": data_hex,
+            "expires_at_monotonic": expires_at,
+        }
+        with self._destructive_approval_lock:
+            now = time.monotonic()
+            self._pending_destructive_approvals = {
+                key: item for key, item in self._pending_destructive_approvals.items()
+                if item["expires_at_monotonic"] > now
+            }
+            if len(self._pending_destructive_approvals) >= 128:
+                raise RuntimeError("Too many pending destructive approvals; retry after they expire")
+            self._pending_destructive_approvals[approval_id] = record
+        return {
+            "approval_id": approval_id,
+            "device_id": device_id,
+            "operation": operation,
+            "interface_id": interface_id,
+            "data_hex": data_hex,
+            "expires_in_seconds": 120,
+            "notice": "One-time approval for a destructive operation. Consumed on first use.",
+        }
+
+    def discard_destructive_approval(self, approval_id: str) -> bool:
+        """Revoke a pending destructive operation approval."""
+        with self._destructive_approval_lock:
+            return self._pending_destructive_approvals.pop(approval_id, None) is not None
 
     def explain_interface(self, device_id: str, interface_id: str) -> dict[str, Any]:
         device, _ = self._device(device_id)
@@ -1220,6 +1328,36 @@ def delete_device_experiment(device_id: str, experiment_id: int) -> dict[str, An
     if not ok:
         raise KeyError(f"Unknown experiment {experiment_id} for device {device_id!r}")
     return _json({"deleted": experiment_id, "device_id": device_id})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=True,
+                                        idempotent=False, open_world=False))
+def authorize_destructive_operation(
+    device_id: str,
+    operation: str,
+    interface_id: str | None = None,
+    data_hex: str | None = None,
+) -> dict[str, Any]:
+    """Create a one-time explicit approval for a destructive operation.
+
+    Only valid when UDMCP_ACCESS_MODE=unrestricted. The approval expires after
+    120 seconds and is consumed the first time the matching destructive
+    operation (flash, firmware_update, erase, wipe, format, delete, remove,
+    factory_reset, bootloader_unlock, execute) runs. The AI cannot grant this
+    approval itself; it records an owner-initiated intent.
+    """
+    return _json(service.authorize_destructive_operation(
+        device_id, operation, interface_id=interface_id, data_hex=data_hex))
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=True,
+                                        idempotent=False, open_world=False))
+def discard_destructive_approval(approval_id: str) -> dict[str, Any]:
+    """Revoke a pending destructive operation approval by its ID."""
+    ok = service.discard_destructive_approval(approval_id)
+    if not ok:
+        raise KeyError(f"Unknown destructive approval {approval_id!r}")
+    return _json({"revoked": approval_id})
 
 
 @mcp.resource("udmcp://devices", name="Known device profiles",

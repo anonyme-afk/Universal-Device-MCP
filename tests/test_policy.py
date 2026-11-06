@@ -62,6 +62,63 @@ class AccessPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(PermissionError, "blocked in every access mode"):
                     service._enforce_policy(device, "firmware_update", None, "if0")
 
+    def test_unrestricted_mode_allows_critical_operations_without_explicit_allow(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        device = Device("camper", "fake", "Test", "fake:1")
+        with tempfile.TemporaryDirectory() as folder:
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({"max_write_bytes": 4}), encoding="utf-8")
+            env = {"UDMCP_POLICY": str(policy_path)}
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "unrestricted"}):
+                service._enforce_policy(device, "firmware_update", None, "if0")
+                service._enforce_policy(device, "erase", b"\x00", "if0")
+                service._enforce_policy(device, "execute", None, "if0")
+                service._enforce_policy(device, "write", b"\x00", "if0")
+
+    def test_unrestricted_mode_still_enforces_explicit_denies(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        device = Device("camper", "fake", "Test", "fake:1")
+        with tempfile.TemporaryDirectory() as folder:
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({
+                "max_write_bytes": 4,
+                "denied_operations": [
+                    {"transport": "fake", "operation": "firmware_update",
+                     "device_id": "*", "interface_id": "*"}
+                ],
+            }), encoding="utf-8")
+            env = {"UDMCP_POLICY": str(policy_path)}
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "unrestricted"}):
+                with self.assertRaisesRegex(PermissionError, "Blocked by local policy"):
+                    service._enforce_policy(device, "firmware_update", None, "if0")
+                service._enforce_policy(device, "erase", b"\x00", "if0")
+
+    def test_load_access_policy_accepts_unrestricted_mode(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        device = Device("camper", "fake", "Test", "fake:1")
+        with tempfile.TemporaryDirectory() as folder:
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({}), encoding="utf-8")
+            env = {"UDMCP_POLICY": str(policy_path)}
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "unrestricted"}):
+                policy = service.access_policy()["policy"]
+                self.assertEqual("unrestricted", policy["access_mode"])
+
+    def test_access_modes_reject_invalid_value(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        device = Device("camper", "fake", "Test", "fake:1")
+        with tempfile.TemporaryDirectory() as folder:
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({}), encoding="utf-8")
+            env = {"UDMCP_POLICY": str(policy_path)}
+            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "bogus"}):
+                with self.assertRaisesRegex(ValueError, "must be safe"):
+                    service.access_policy()
+
     def test_device_service_records_connect_and_disconnect(self):
         with tempfile.TemporaryDirectory() as folder:
             old_database = os.environ.get("UDMCP_DATABASE")

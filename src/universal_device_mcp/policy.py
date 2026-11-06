@@ -19,11 +19,18 @@ CRITICAL_OPERATIONS = {
 
 READ_OPERATIONS = {"read", "receive", "inspect"}
 
+DESTRUCTIVE_OPERATIONS = {
+    "flash", "firmware_update", "erase", "wipe", "format", "delete",
+    "remove", "factory_reset", "bootloader_unlock", "execute",
+}
+
 DEFAULT_TRUSTED_OPERATIONS = [
     "open", "read", "receive", "write", "send", "communicate", "control_write",
 ]
 
 DEFAULT_MAX_WRITE_BYTES = 4096
+
+VALID_ACCESS_MODES = {"safe", "trusted", "full", "unrestricted"}
 
 
 def load_access_policy() -> dict[str, Any]:
@@ -33,8 +40,9 @@ def load_access_policy() -> dict[str, Any]:
     (normalized policy dict with defaults applied).
     """
     mode = os.environ.get("UDMCP_ACCESS_MODE", "safe").strip().lower()
-    if mode not in {"safe", "trusted", "full"}:
-        raise ValueError("UDMCP_ACCESS_MODE must be safe, trusted, or full")
+    if mode not in VALID_ACCESS_MODES:
+        raise ValueError(
+            "UDMCP_ACCESS_MODE must be safe, trusted, full, or unrestricted")
     policy_path = os.environ.get("UDMCP_POLICY")
     if not policy_path:
         return {"path": None, "policy": {
@@ -71,7 +79,15 @@ def enforce_access_policy(
     """
     policy = load_access_policy()["policy"]
     operation_lower = operation.lower()
-    if operation_lower in CRITICAL_OPERATIONS:
+    mode = policy["access_mode"]
+
+    # The unrestricted mode removes the blanket ban on critical/destructive
+    # operations (flash, firmware_update, erase, wipe, format, delete, remove,
+    # factory_reset, bootloader_unlock, execute). Explicit per-rule denies in
+    # UDMCP_POLICY still apply in every mode, including unrestricted, because
+    # they represent an express owner decision. Size limits (max_write_bytes)
+    # are retained in every mode as a safety guardrail.
+    if mode != "unrestricted" and operation_lower in CRITICAL_OPERATIONS:
         raise PermissionError(f"Critical operation {operation!r} is blocked in every access mode")
 
     denied = policy.get("denied_operations", [])
@@ -100,7 +116,6 @@ def enforce_access_policy(
             rule.get("interface_id") == interface_id
         )
 
-    mode = policy["access_mode"]
     trusted_devices = policy.get("trusted_devices", [])
     trusted_operations = policy.get("trusted_operations", DEFAULT_TRUSTED_OPERATIONS)
     if not isinstance(trusted_devices, list) or not isinstance(trusted_operations, list):
@@ -109,7 +124,11 @@ def enforce_access_policy(
     if mode == "trusted" and operation in trusted_operations and trusted_match:
         explicitly_allowed = True
 
-    if operation not in READ_OPERATIONS and not explicitly_allowed and mode != "full":
+    # In unrestricted mode, non-read operations are permitted without an exact
+    # allowed_operations rule. In full mode, the same applies. In safe/trusted,
+    # an exact rule is required (trusted_mode also allows trusted_operations on
+    # trusted_devices).
+    if mode in {"safe", "trusted"} and operation not in READ_OPERATIONS and not explicitly_allowed:
         raise PermissionError(
             f"Blocked by {mode} policy for {device.transport}/{operation}; "
             "add an exact transport, device_id, interface_id and operation rule to UDMCP_POLICY"

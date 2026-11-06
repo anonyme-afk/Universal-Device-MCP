@@ -23,8 +23,8 @@ Utilisez ce serveur lorsque vous devez :
 
 **N'utilisez pas ce serveur pour :**
 - Contrôler du matériel dont le protocole est inconnu et non documenté (le serveur ne devine pas les formats propriétaires).
-- Flasher un firmware, formater un périphérique, exécuter du code arbitraire ou effectuer une réinitialisation d'usine (bloqués dans tous les modes d'accès).
 - Accéder à du matériel sans les permissions du système d'exploitation (Windows, macOS, Linux restent autorité).
+- En mode `unrestricted`, effectuer des opérations destructives sans avoir obtenu une approbation ponctuelle explicite via `authorize_destructive_operation` — l'IA ne peut pas s'accorder cette approbation elle-même.
 
 ## 1. Découverte des appareils
 
@@ -136,6 +136,8 @@ Utilisez ce tableau pour choisir l'outil selon votre objectif :
 | Nœud distant : lire | `read_remote_devices(targets, operation?)` | Lecture |
 | Android Wi-Fi : appairer | `pair_android_over_wifi(endpoint, pairing_code)` | Écriture |
 | Android Wi-Fi : connecter | `connect_android_over_wifi(endpoint)` | Écriture |
+| Approuver opération destructive | `authorize_destructive_operation(device_id, operation, interface_id?, data_hex?)` | Écriture (sécurité) |
+| Révoquer approbation destructive | `discard_destructive_approval(approval_id)` | Écriture (sécurité) |
 
 ## 4. Exécution sécurisée d'une opération
 
@@ -156,6 +158,7 @@ Le mode est défini localement par le propriétaire de l'ordinateur via la varia
 | `safe` (défaut) | Lectures autorisées. Écritures bloquées sans règle exacte (transport, device_id, interface_id, opération). |
 | `trusted` | Lectures toujours autorisées. Écritures/ouvertures autorisées si l'appareil figure dans `trusted_devices` ET l'opération figure dans `trusted_operations` (défaut: open, read, receive, write, send, communicate, control_write), ou si une règle `allowed_operations` exacte correspond. |
 | `full` | Opérations non critiques sans règle par opération, mais limites de taille, refus explicites, audit et blocages d'opérations critiques conservés. |
+| `unrestricted` | Toutes les opérations (y compris `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`) ne sont plus bloquées par défaut. **Cependant**, chaque opération destructive requiert une approbation ponctuelle explicite via `authorize_destructive_operation` (l'IA ne peut pas s'accorder cette approbation elle-même). Les refus explicites (`denied_operations`) et les limites de taille s'appliquent toujours. |
 
 ## MCP Resources
 
@@ -170,7 +173,7 @@ Le serveur expose deux ressources MCP (lecture seule, accessibles via `read_reso
 
 | Variable | Valeurs | Description |
 |----------|---------|-------------|
-| `UDMCP_ACCESS_MODE` | `safe` (défaut), `trusted`, `full` | Mode d'accès sélectionné par le propriétaire local. |
+| `UDMCP_ACCESS_MODE` | `safe` (défaut), `trusted`, `full`, `unrestricted` | Mode d'accès sélectionné par le propriétaire local. |
 | `UDMCP_POLICY` | Chemin fichier JSON | Chemin vers le fichier de politique d'accès locale. |
 | `UDMCP_DATABASE` | Chemin fichier | Chemin de la base de données SQLite des profils d'appareils. |
 | `UDMCP_MEDIA_CAPTURE` | `true` (opt-in) | Active la capture caméra/microphone. Requis pour `discover_cameras`, `capture_camera_image`, `discover_microphones`, `record_audio_sample`. |
@@ -200,10 +203,14 @@ Le serveur expose deux ressources MCP (lecture seule, accessibles via `read_reso
 
 Les règles utilisent `*` comme joker pour transport, operation, device_id et interface_id.
 
-### Opérations bloquées dans tous les modes
+### Opérations critiques et mode unrestricted
 
-Ces opérations sont toujours refusées, quel que soit le mode :
+Dans les modes `safe`, `trusted` et `full`, les opérations suivantes sont toujours bloquées :
 - `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`.
+
+Dans le mode `unrestricted`, ces opérations ne sont plus bloquées par défaut, mais chacune requiert une **approbation ponctuelle explicite** via l'outil `authorize_destructive_operation` avant d'être exécutée. L'approbation expire après 120 secondes et est consommée à la première utilisation. L'IA ne peut pas s'accorder cette approbation elle-même.
+
+Les règles de refus explicites (`denied_operations`) du fichier `UDMCP_POLICY` s'appliquent dans **tous** les modes, y compris `unrestricted`, car elles représentent une décision expresse du propriétaire. Les limites de taille (`max_write_bytes`) s'appliquent également dans tous les modes.
 
 ### Limites de taille
 
@@ -261,7 +268,8 @@ Si un appareil ne répond pas :
 
 - Le serveur est une couche d'accès générique, pas une garantie que tout matériel est contrôlable.
 - Les protocoles propriétaires non documentés restent des expériences jusqu'à validation.
-- Certaines opérations (flash, wipe, format, execute) sont bloquées dans tous les modes d'accès.
-- L'IA ne peut pas changer le mode d'accès (`safe`/`trusted`/`full`) — c'est réservé au propriétaire local.
+- Dans les modes `safe`, `trusted` et `full`, les opérations `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock` et `execute` sont bloquées. En mode `unrestricted`, elles ne sont plus bloquées par défaut mais requièrent une approbation ponctuelle via `authorize_destructive_operation`.
+- L'IA ne peut pas changer le mode d'accès (`safe`/`trusted`/`full`/`unrestricted`) — c'est réservé au propriétaire local.
 - Les captures caméra/audio sont limitées (une image JPEG ≤ 900 Ko, ≤ 10 s de WAV mono 16 kHz, pas de flux continu).
 - Les écritures de groupe nécessitent une approbation humaine explicite via MCP elicitation.
+- Les règles `denied_operations` du fichier `UDMCP_POLICY` s'appliquent dans tous les modes, y compris `unrestricted`.

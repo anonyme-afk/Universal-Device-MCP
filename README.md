@@ -309,7 +309,7 @@ Un guide d'instructions réutilisable est disponible dans [WORKFLOW.md](./WORKFL
 1. Découvrir le matériel connecté (`discover_devices`, `discover_wireless_devices`).
 2. Inspecter les interfaces et capacités d'un appareil (`inspect_device`, `explain_device_interface`, `get_device_capabilities`).
 3. Sélectionner l'outil MCP approprié selon l'objectif.
-4. Exécuter des opérations de manière sécurisée en respectant les modes d'accès (`safe`, `trusted`, `full`).
+4. Exécuter des opérations de manière sécurisée en respectant les modes d'accès (`safe`, `trusted`, `full`, `unrestricted`).
 5. Vérifier le succès de chaque opération.
 6. Gérer les erreurs, les appareils indisponibles et les opérations non supportées.
 
