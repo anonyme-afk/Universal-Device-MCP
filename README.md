@@ -331,3 +331,4 @@ Structured USB HID report-descriptor parsing, discovery of non-advertising netwo
 
 MIT. See [LICENSE](LICENSE).
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/anonyme-afk-universal-device-mcp-f1xgvy?v=bb45155b7041cba6be0f7510c8f5df55)](https://m8ven.ai/mcp/anonyme-afk-universal-device-mcp-f1xgvy?s=readme)
