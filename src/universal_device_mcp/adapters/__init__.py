@@ -7,8 +7,17 @@ from .hid import HIDAdapter
 from .ios import IOSAdapter
 from .network import NetworkAdapter
 from .serial import SerialAdapter
+from .simulator import SimulatorAdapter
 from .usb import USBAdapter
 
-__all__ = ["Adapter", "USBAdapter", "SerialAdapter", "BluetoothAdapter", "ADBAdapter",
-           "NetworkAdapter", "HIDAdapter", "IOSAdapter"]
-
+__all__ = [
+    "Adapter",
+    "USBAdapter",
+    "SerialAdapter",
+    "BluetoothAdapter",
+    "ADBAdapter",
+    "NetworkAdapter",
+    "HIDAdapter",
+    "IOSAdapter",
+    "SimulatorAdapter",
+]
