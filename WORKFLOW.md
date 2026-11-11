@@ -131,6 +131,8 @@ Use this table to choose the appropriate tool for your task:
 | Microphone: discover | `discover_microphones` | Read |
 | Microphone: record sample | `record_audio_sample` | Write (in-memory) |
 | Device group: create | `create_device_group` | Write (memory) |
+| Device group: list | `list_device_groups` | Read |
+| Device group: inspect | `inspect_device_group(group_id)` | Read |
 | Device group: read | `read_device_group` | Read |
 | Device group: prepare write | `prepare_group_write` | Write (plan) |
 | Device group: execute write | `execute_approved_group_write` | Write (requires human approval) |
@@ -199,6 +201,11 @@ The server exposes two MCP resources (read-only, accessed via `read_resource`):
 | `UDMCP_TRANSPORT` | `stdio` (default), `streamable-http` | MCP communication transport. |
 | `UDMCP_HTTP_HOST` | `127.0.0.1` (default) | Host for HTTP transport. |
 | `UDMCP_HTTP_PORT` | `8000` (default) | Port for HTTP transport. |
+| `UDMCP_ENABLE_SIMULATOR` | `false` (default), `true` | Enables built-in simulated virtual hardware devices for testing without hardware. |
+| `UDMCP_REMOTE_NODES` | JSON string or file path | List of remote UDMCP nodes for distributed hub mode. |
+| `UDMCP_NODE_TOKEN` | Secret string | Bearer authentication token for node communication. |
+| `UDMCP_NODE_SCOPES` | Comma-separated list | Allowed token scopes for node operations (read, write, admin). |
+| `UDMCP_RESOURCE_URL` | URL string | External base URL advertised by node for resource retrieval. |
 | `UDMCP_UNRESTRICTED_CONFIRMED` | `true`, `false` | Explicit owner confirmation required for unrestricted mode. |
 | `UDMCP_UNRESTRICTED_BYPASS_APPROVAL` | `true`, `false` | Owner opt-out for per-operation destructive approval in unrestricted mode. |
 

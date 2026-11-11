@@ -213,11 +213,14 @@ The same `uvx` configuration works on macOS and Linux when `uv` is on `PATH`. Fo
 | `get_device_knowledge(device_id)` | Return profile, discoveries and recent experiment history. |
 | `export_device_profile(device_id)` | Export one complete profile as JSON text. |
 | `forget_device(device_id)` | Delete one profile, discoveries and experiments. |
-| `reload_access_policy()` | Reload the local access policy from the `UDMCP_POLICY` file without changing the access mode (`safe`/`trusted`/`full`). Only the computer owner selects the mode. |
+| `reload_access_policy()` | Reload the local access policy from the `UDMCP_POLICY` file without changing the access mode (`safe`/`trusted`/`full`/`unrestricted`). Only the computer owner selects the mode. |
+| `get_access_policy()` | Show the local access mode (`safe`, `trusted`, `full`, `unrestricted`) and active per-device policy. |
+| `confirm_unrestricted_mode()` | Report whether unrestricted access mode is owner-confirmed via `UDMCP_UNRESTRICTED_CONFIRMED=true`. |
+| `authorize_destructive_operation(device_id, operation, interface_id?, data_hex?)` / `discard_destructive_approval(approval_id)` | Authorize a one-time approval for a destructive operation in unrestricted mode, or revoke an active approval. Approvals expire after 120 seconds. |
+| `list_remote_nodes()` / `discover_remote_devices()` / `read_remote_devices(targets, operation?)` | Distributed hub/node mode: list configured remote nodes, discover devices across nodes in parallel, and read from remote targets concurrently. |
 | `connect_device(device_id)` | Mark a known device as connected for generic interface operations on any transport. Does not bypass OS permissions, pairing or adapter constraints. |
 | `disconnect_device(device_id)` | Close all open interface sessions and mark a device as disconnected. Does not remove the profile or its history. |
 | `delete_device_experiment(device_id, experiment_id)` | Delete one recorded communication experiment for a device by its ID; granular history deletion without removing the whole profile. |
-| `get_access_policy()` | Show the local access mode (`safe`, `trusted`, or `full`) and active per-device policy. |
 | `discover_cameras(max_index?)` / `capture_camera_image(camera_index?)` | Explicitly probe cameras or capture one bounded JPEG in memory; camera access is disabled unless the owner sets `UDMCP_MEDIA_CAPTURE=true`. |
 | `discover_microphones()` / `record_audio_sample(duration_seconds?, device_index?)` | List audio inputs or explicitly capture at most 10 seconds of WAV in memory; capture is owner-enabled and never saved. |
 
@@ -276,7 +279,7 @@ Writes and interface opening are denied unless `UDMCP_POLICY` points to a local 
 
 ### Local access modes
 
-The computer owner may set `UDMCP_ACCESS_MODE` in the MCP server's local environment. The default is `safe`, which keeps exact per-device policy rules for mutations. `trusted` also permits the standard read/open/write operations for devices whose exact ID or fingerprint is listed in the local `UDMCP_POLICY` JSON `trusted_devices` array. `full` permits supported non-critical adapter operations without per-operation allow rules. Explicit deny rules, OS permissions, adapter limits, payload caps and audit history still apply in every mode. Firmware flashing, erase/wipe/format, delete/remove, arbitrary execute, factory reset and bootloader unlock operations are blocked in all three modes. The agent cannot change the process environment or select a mode through an MCP tool.
+The computer owner may set `UDMCP_ACCESS_MODE` in the MCP server's local environment. The default is `safe`, which keeps exact per-device policy rules for mutations. `trusted` also permits the standard read/open/write operations for devices whose exact ID or fingerprint is listed in the local `UDMCP_POLICY` JSON `trusted_devices` array. `full` permits supported non-critical adapter operations without per-operation allow rules. `unrestricted` removes the blanket block on critical operations (`flash`, `erase`, `firmware_update`, `wipe`, `format`, `execute`) but requires explicit owner confirmation (`UDMCP_UNRESTRICTED_CONFIRMED=true`) and per-operation human approvals via `authorize_destructive_operation` (with optional owner bypass via `UDMCP_UNRESTRICTED_BYPASS_APPROVAL=true`). Explicit deny rules (`denied_operations`), OS permissions, adapter limits, payload caps and audit history still apply in every mode. The agent cannot change the process environment or select a mode through an MCP tool.
 
 ### Camera and microphone capture
 
@@ -290,7 +293,7 @@ Set `UDMCP_ENABLE_SIMULATOR=true` in the MCP client's environment, then call `di
 
 The local MCP can also act as an authenticated remote node. A hub aggregates inventory from a fixed list of nodes and can issue bounded parallel **reads only**. Remote write tools are intentionally not exposed; each node's local policy remains authoritative. This initial hub mode is single-tenant and uses a shared bearer token per node, not OIDC, mTLS, enrollment, or a distributed job queue. Put the node behind HTTPS before connecting over a network.
 
-On each node, set a random secret of at least 32 characters and start the server with `UDMCP_ROLE=node`, `UDMCP_TRANSPORT=streamable-http`, `UDMCP_NODE_TOKEN`, and `UDMCP_RESOURCE_URL` set to that node's HTTPS MCP URL. For a local smoke setup only, bind to `127.0.0.1` and use an `http://localhost:8000/mcp` resource URL is not accepted; node resources must be HTTPS. On a real host, terminate TLS at a trusted reverse proxy and set `UDMCP_HTTP_HOST=127.0.0.1` behind it. Node HTTP defaults to loopback and port 8000.
+On each node, set a random secret of at least 32 characters and start the server with `UDMCP_ROLE=node`, `UDMCP_TRANSPORT=streamable-http`, `UDMCP_NODE_TOKEN`, allowed scopes in `UDMCP_NODE_SCOPES` (e.g. `read,write`), and `UDMCP_RESOURCE_URL` set to that node's HTTPS MCP URL. For a local smoke setup only, bind to `127.0.0.1` and use `UDMCP_HTTP_PORT=8000` (an `http://localhost:8000/mcp` resource URL is not accepted for production; node resources must be HTTPS). On a real host, terminate TLS at a trusted reverse proxy and set `UDMCP_HTTP_HOST=127.0.0.1` behind it. Node HTTP defaults to loopback and port 8000.
 
 On the hub, configure `UDMCP_REMOTE_NODES` as a JSON array and provide each token through the named environment variable (never put the secret in the JSON):
 
