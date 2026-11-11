@@ -27,8 +27,9 @@ all = ["pyusb>=1.2", "pyserial>=3.5", "bleak>=0.22", "zeroconf>=0.132", "hidapi>
        "pymobiledevice3>=4.0"]
 
 [project.scripts]
-universal-device-mcp = "universal_device_mcp.cli:main"
+universal-device-mcp = "universal_device_mcp.server:main"
 universal-device-mcp-server = "universal_device_mcp.server:main"
+universal-device = "universal_device_mcp.cli:main"
 universal-device-configure = "universal_device_mcp.configure:main"
 
 [tool.hatch.build.targets.wheel]

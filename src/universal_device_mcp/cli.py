@@ -247,13 +247,31 @@ def build_parser():
     return parser
 
 
-def main(argv):
-    """Entry point for the CLI."""
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for the ``universal-device-mcp`` command.
 
+    Parses the command line and dispatches to the requested sub-command.
+    When no sub-command is given, the MCP server is launched.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if hasattr(args, "func"):
-        args.func(args)
-    else:
+    if args.version:
+        from universal_device_mcp import __version__
+
+        print(f"universal-device-mcp {__version__}")
+        return 0
+
+    if not getattr(args, "command", None):
+        return cmd_server(args)
+
+    func = getattr(args, "func", None)
+    if func is None:
         parser.print_help()
+        return 1
+
+    return func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
