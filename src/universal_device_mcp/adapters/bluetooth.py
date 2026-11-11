@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
+from collections.abc import Coroutine
 from typing import Any
 
 from ..models import Device
 from .base import Adapter
+
+
+def _safe_async_run(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Execute an async coroutine safely even if an event loop is already running."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
 
 
 class BluetoothAdapter(Adapter):
@@ -34,14 +48,14 @@ class BluetoothAdapter(Adapter):
                     "manufacturer_data": {str(k): bytes(v).hex() for k,v in adv.manufacturer_data.items()},
                     "service_uuids": list(adv.service_uuids)}, interfaces=[]))
             return devices
-        return asyncio.run(scan())
+        return _safe_async_run(scan())
 
     def inspect(self, device: Device) -> dict[str, Any]:
         client_cls, _ = self._bleak()
         async def read_services():
             async with client_cls(device.identity["address"]) as client:
                 return await self._service_details(client)
-        return asyncio.run(read_services())
+        return _safe_async_run(read_services())
 
     @staticmethod
     async def _service_details(client: Any) -> dict[str, Any]:
@@ -67,5 +81,5 @@ class BluetoothAdapter(Adapter):
                 if operation == "inspect":
                     return await self._service_details(client)
                 raise ValueError("BLE operation must be inspect, read or write")
-        return asyncio.run(run())
+        return _safe_async_run(run())
 

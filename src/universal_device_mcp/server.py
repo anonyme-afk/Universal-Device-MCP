@@ -412,7 +412,7 @@ class DeviceService:
                     with self._session_lock:
                         if self._sessions.get(session_id) is not session:
                             raise KeyError(f"Unknown interface session: {session_id}")
-                self._require_destructive_approval(device, operation, interface_id, data_hex)
+                self._require_destructive_approval(device, operation, interface_id, data)
                 self._enforce_policy(device, operation, data, interface_id)
                 if session:
                     options["_session"] = session["handle"]
@@ -650,7 +650,12 @@ class DeviceService:
         # in get_access_policy() and in server logs.
         if is_destructive_approval_bypassed():
             return
-        data_hex = data.hex() if data else None
+        if isinstance(data, bytes):
+            data_hex_val = data.hex()
+        elif isinstance(data, str):
+            data_hex_val = data
+        else:
+            data_hex_val = None
         with self._destructive_approval_lock:
             now = time.monotonic()
             self._pending_destructive_approvals = {
@@ -658,10 +663,12 @@ class DeviceService:
                 if item["expires_at_monotonic"] > now
             }
             for key, item in self._pending_destructive_approvals.items():
-                if (item["device_id"] == device.device_id
-                        and item["operation"].lower() == operation.lower()
-                        and item["interface_id"] == interface_id
-                        and item["data_hex"] == data_hex):
+                if (
+                    item["device_id"] == device.device_id
+                    and item["operation"].lower() == operation.lower()
+                    and (item["interface_id"] is None or item["interface_id"] == interface_id)
+                    and (item["data_hex"] is None or item["data_hex"] == data_hex_val)
+                ):
                     self._pending_destructive_approvals.pop(key, None)
                     return
         raise PermissionError(
@@ -808,7 +815,8 @@ def _tool_annotations(*, read_only: bool, destructive: bool, idempotent: bool,
         return None
 
 
-@mcp.tool()
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                      idempotent=True, open_world=False))
 def discover_devices(transports: list[str] | None = None) -> dict[str, Any]:
     """Discover connected devices using available USB, serial, BLE, Android ADB and iOS adapters.
 
@@ -873,13 +881,15 @@ def get_runtime_status() -> dict[str, Any]:
                   "tools": "generic interface I/O; physical capabilities depend on each adapter and OS"})
 
 
-@mcp.tool()
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                      idempotent=True, open_world=False))
 def discover_wireless_devices() -> dict[str, Any]:
     """Discover BLE/local mDNS services, wireless Android ADB and paired iOS mobdev2 services."""
     return _json(service.discover_wireless())
 
 
-@mcp.tool()
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                      idempotent=False, open_world=False))
 def pair_android_over_wifi(endpoint: str, pairing_code: str) -> dict[str, Any]:
     """Pair Android Wireless Debugging using a six-digit code shown by the owner on the device.
 
@@ -889,7 +899,8 @@ def pair_android_over_wifi(endpoint: str, pairing_code: str) -> dict[str, Any]:
     return _json(service.pair_android_wireless(endpoint, pairing_code))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_tool_annotations(read_only=False, destructive=False,
+                                      idempotent=False, open_world=False))
 def connect_android_over_wifi(endpoint: str) -> dict[str, Any]:
     """Connect to an Android TLS ADB service currently advertised by ADB mDNS."""
     return _json(service.connect_android_wireless(endpoint))

@@ -88,7 +88,10 @@ class SerialAdapter(Adapter):
         try:
             if operation in {"write", "send"}:
                 return {"bytes_written": conn.write(data or b"")}
-            payload = conn.read(length)
+            read_length = length
+            if "length" not in options and hasattr(conn, "in_waiting") and conn.in_waiting > 0:
+                read_length = min(conn.in_waiting, 1_048_576)
+            payload = conn.read(read_length)
             return {"data_hex": payload.hex(), "data_text": payload.decode("utf-8", errors="replace")}
         finally:
             if owned:

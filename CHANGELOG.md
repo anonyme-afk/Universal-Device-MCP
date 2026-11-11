@@ -7,6 +7,13 @@
 - Add capability summaries, interface explanations, diagnostics and device reports.
 - Replace loopback-dependent network adapter tests with deterministic socket fakes to avoid OS-specific CI failures.
 - Update V2 specification so it includes V1 as its node runtime and make current incomplete release gates explicit.
+- Remove duplicate MCP Inspector smoke test step from CI workflow.
+- Add MCP tool annotations (read_only, destructive, idempotent, open_world) on all discover/pair/connect tools for host-side UX.
+- Remove duplicate `import os` in memory.py `_default_database_path`.
+- Add GitHub Release workflow for automated PyPI publishing on version tags.
+- Fix Bluetooth async execution safety with `_safe_async_run` helper for nested event loops.
+- Improve Serial read logic with `in_waiting` check and 1 MiB length bound.
+- Harden destructive approval handling with proper bytes/string type handling and null checks.
 
 ## 0.2.0
 

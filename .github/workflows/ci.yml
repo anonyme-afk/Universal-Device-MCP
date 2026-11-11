@@ -36,10 +36,3 @@ jobs:
           UDMCP_AUTO_MONITOR: 'false'
           UDMCP_ENABLE_SIMULATOR: 'true'
           UDMCP_DATABASE: ${{ runner.temp }}/udmcp-ci.sqlite3
-      - name: MCP Inspector protocol smoke test
-        run: |
-          npx --yes @modelcontextprotocol/inspector --cli python -m universal_device_mcp.server --method tools/list --format json | python -c "import json,sys; names={tool['name'] for tool in json.load(sys.stdin)['result']['tools']}; assert {'discover_devices','communicate_many','get_access_policy','create_device_group','prepare_group_write','execute_approved_group_write','run_device_diagnostics'} <= names, names"
-        env:
-          UDMCP_AUTO_MONITOR: 'false'
-          UDMCP_ENABLE_SIMULATOR: 'true'
-          UDMCP_DATABASE: ${{ runner.temp }}/udmcp-ci.sqlite3

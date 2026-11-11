@@ -16,7 +16,6 @@ from .models import Device, utc_now
 
 def _default_database_path() -> Path:
     """Resolve the conventional per-user data directory without a hard dependency."""
-    import os
     import sys
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
