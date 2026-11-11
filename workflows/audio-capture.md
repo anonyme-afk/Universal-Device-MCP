@@ -1,45 +1,45 @@
-# Workflow : Enregistrement audio avec un microphone
+# Workflow: Audio Recording with a Microphone
 
-## Objectif
+## Objective
 
-Détecter les microphones disponibles et capturer un échantillon audio WAV en mémoire.
+Detect available microphones and capture an in-memory WAV audio sample.
 
 ## Preconditions
 
-- `UDMCP_MEDIA_CAPTURE=true` doit être défini dans l'environnement du serveur (opt-in du propriétaire).
-- Le paquet `[media]` est installé (`opencv-python-headless`, `sounddevice`, `numpy`).
+- `UDMCP_MEDIA_CAPTURE=true` must be set in the server environment (owner opt-in).
+- The `[media]` package extra must be installed (`opencv-python-headless`, `sounddevice`, `numpy`).
 
-## Séquence recommandée
+## Recommended Sequence
 
-1. **Vérifier que le média est autorisé** : vérifier `UDMCP_MEDIA_CAPTURE=true`.
-2. **Découvrir les microphones** : `discover_microphones()`
-   - Liste les périphériques d'entrée audio sans ouvrir de flux d'enregistrement.
-3. **Enregistrer un échantillon** : `record_audio_sample(duration_seconds=3.0, device_index=None)`
-   - Durée entre 0,25 et 10 secondes.
-   - Retourne un WAV mono 16 kHz encodé en base64, en mémoire uniquement.
-   - L'audio n'est pas écrit sur disque et n'est pas conservé dans l'historique.
+1. **Verify media permissions**: Check that `UDMCP_MEDIA_CAPTURE=true` or query `get_access_policy`.
+2. **Discover microphones**: `discover_microphones()`
+   - Lists audio input devices without opening an active recording stream.
+3. **Record a sample**: `record_audio_sample(duration_seconds=3.0, device_index=None)`
+   - Duration between 0.25 and 10 seconds.
+   - Returns in-memory, base64-encoded mono 16 kHz WAV audio.
+   - Audio is never written to disk and is not stored in history.
 
-## Outils MCP utilisés
+## MCP Tools Used
 
 - `discover_microphones`
 - `record_audio_sample`
 
-## Résultat attendu
+## Expected Output
 
-- Liste des microphones avec `device_id`, `index`, `name`, `max_input_channels`, `default_samplerate`.
-- Audio capturé : `mime_type: audio/wav`, `audio_base64`, `sample_rate_hz: 16000`, `channels: 1`, `duration_seconds`, `persisted: false`.
+- List of microphones with `device_id`, `index`, `name`, `max_input_channels`, `default_samplerate`.
+- Captured audio: `mime_type: audio/wav`, `audio_base64`, `sample_rate_hz: 16000`, `channels: 1`, `duration_seconds`, `persisted: false`.
 
-## Gestion des erreurs
+## Error Handling
 
 | Situation | Action |
 |-----------|--------|
-| `PermissionError` | `UDMCP_MEDIA_CAPTURE` n'est pas défini. Demander au propriétaire de l'activer localement. |
-| `ImportError` | Le paquet `[media]` n'est pas installé. Exécuter `pip install "universal-device-mcp[media]"`. |
-| `ValueError` | `duration_seconds` doit être entre 0,25 et 10. Corriger le paramètre. |
-| Aucun microphone trouvé | Aucun périphérique d'entrée audio détecté. Vérifier que le microphone est branché et autorisé par l'OS. |
+| `PermissionError` | `UDMCP_MEDIA_CAPTURE` is not set. Ask the computer owner to enable it locally. |
+| `ImportError` | The `[media]` extra is not installed. Run `pip install "universal-device-mcp[media]"`. |
+| `ValueError` | `duration_seconds` must be between 0.25 and 10. Correct the parameter. |
+| No microphone found | No audio input device detected. Verify physical connection and OS microphone privacy permissions. |
 
-## Considérations de sécurité
+## Security Considerations
 
-- Aucun microphone n'est enregistré en arrière-plan par défaut. `record_audio_sample` requiert un appel explicite.
-- L'audio est en mémoire uniquement, jamais écrit sur disque.
-- Respecter les paramètres de confidentialité du système d'exploitation (Windows/macOS/Linux).
+- No microphone is recorded in the background by default. `record_audio_sample` requires an explicit tool call.
+- Audio is held strictly in memory and is never written to disk.
+- Respect host OS privacy settings (Windows, macOS, Linux).

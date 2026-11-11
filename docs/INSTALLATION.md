@@ -1,4 +1,27 @@
-# Simple setup for more MCP clients
+# Client Setup Guide
+
+## Fast 1-Step Setup (Clone & Auto-Configure)
+
+If you have cloned this repository, you can set up the server and auto-configure all your installed AI agents with a single command:
+
+```bash
+git clone https://github.com/anonyme-afk/Universal-Device-MCP.git
+cd Universal-Device-MCP
+python quickstart.py
+```
+
+- **Windows:** Double-click `setup.bat` or run `.\setup.bat` in a terminal.
+- **macOS / Linux:** Run `chmod +x setup.sh && ./setup.sh` in a terminal.
+
+**What the quickstart script does automatically:**
+1. Verifies Python 3.11+ and creates a dedicated `.venv` virtual environment.
+2. Installs `universal-device-mcp` with all hardware adapters (USB, Serial, Bluetooth, mDNS, ADB, iOS).
+3. Automatically scans your computer for installed AI clients (**Claude Desktop**, **Cursor**, **Google Antigravity**, **VS Code / Cline**, **Roo Code**, **Windsurf**) and registers Universal Device MCP into their configuration files with safe backups.
+4. An AI agent running in your workspace can execute `python quickstart.py` or `python -m universal_device_mcp.configure --all` to configure itself without any manual file editing!
+
+---
+
+## Alternative: Zero-Install via `uvx` (No git clone needed)
 
 Use the same local server command with any client that supports MCP over `stdio`:
 

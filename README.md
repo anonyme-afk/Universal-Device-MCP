@@ -48,9 +48,24 @@ Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, doc
 
 ## Install
 
-For copy-and-paste setup instructions for Claude Desktop, Claude Code, Codex, Cursor, VS Code, Cline, LM Studio, Ollama-backed models and Google Antigravity, see the [simple installation guide](docs/INSTALLATION.md).
+### Fast 1-Step Setup (Clone & Auto-Configure)
 
-### Quick setup for Claude Desktop, Cursor or VS Code
+If you clone the repository, a single command installs everything and auto-configures your AI agent clients (Claude Desktop, Cursor, Google Antigravity, VS Code / Cline, Roo Code, Windsurf):
+
+```bash
+git clone https://github.com/anonyme-afk/Universal-Device-MCP.git
+cd Universal-Device-MCP
+python quickstart.py
+```
+
+- **Windows:** Double-click or run `setup.bat`.
+- **macOS / Linux:** Run `chmod +x setup.sh && ./setup.sh`.
+
+The script creates the `.venv` virtual environment, installs the package with hardware extras, detects installed AI clients, and updates their MCP configurations automatically. AI agents can also run `python quickstart.py` or `universal-device-configure --all` to configure their own client environment automatically.
+
+### Zero-Clone Setup via `uvx` (No repository clone needed)
+
+For copy-and-paste setup instructions for Claude Desktop, Claude Code, Codex, Cursor, VS Code, Cline, LM Studio, Ollama-backed models and Google Antigravity, see the [simple installation guide](docs/INSTALLATION.md).
 
 You do not need to clone the repository, create a Python environment, or know Python. Install `uv` once using its [official installer](https://docs.astral.sh/uv/getting-started/installation/). `uv` downloads the required Python version and the MCP dependencies when the server first starts.
 
@@ -302,18 +317,18 @@ my_transport = "my_package.adapter:MyAdapter"
 - **MCP server will not start:** verify the client launches the same Python environment where the `mcp` package is installed; inspect the MCP client's stderr/logs.
 - **Profile database location:** set `UDMCP_DATABASE` to an absolute writable file path.
 
-## Workflow pour agents IA
+## AI Agent Workflows
 
-Un guide d'instructions réutilisable est disponible dans [WORKFLOW.md](./WORKFLOW.md). Il explique, étape par étape, comment un agent IA doit :
+A reusable agent instruction guide is available in [WORKFLOW.md](./WORKFLOW.md). It explains step-by-step how an AI agent should:
 
-1. Découvrir le matériel connecté (`discover_devices`, `discover_wireless_devices`).
-2. Inspecter les interfaces et capacités d'un appareil (`inspect_device`, `explain_device_interface`, `get_device_capabilities`).
-3. Sélectionner l'outil MCP approprié selon l'objectif.
-4. Exécuter des opérations de manière sécurisée en respectant les modes d'accès (`safe`, `trusted`, `full`, `unrestricted`).
-5. Vérifier le succès de chaque opération.
-6. Gérer les erreurs, les appareils indisponibles et les opérations non supportées.
+1. Discover connected hardware (`discover_devices`, `discover_wireless_devices`).
+2. Inspect device interfaces and capabilities (`inspect_device`, `explain_device_interface`, `get_device_capabilities`).
+3. Select the appropriate MCP tool based on the user's intent.
+4. Execute operations safely according to access modes (`safe`, `trusted`, `full`, `unrestricted`).
+5. Verify the success and response payload of each operation.
+6. Handle errors, disconnected hardware, and unsupported operations gracefully.
 
-Des scénarios concrets sont disponibles dans le répertoire [`workflows/`](./workflows/) :
+Concrete agent execution guides are available in the [`workflows/`](./workflows/) directory:
 - [hardware-discovery.md](./workflows/hardware-discovery.md)
 - [interface-inspection.md](./workflows/interface-inspection.md)
 - [device-interaction.md](./workflows/device-interaction.md)
@@ -321,7 +336,7 @@ Des scénarios concrets sont disponibles dans le répertoire [`workflows/`](./wo
 - [camera-capture.md](./workflows/camera-capture.md)
 - [audio-capture.md](./workflows/audio-capture.md)
 
-Ce workflow est indépendant de toute plateforme IA ou marketplace et peut être adapté à tout client MCP compatible.
+This workflow is independent of any specific AI platform or marketplace and works with any standard MCP-compliant client.
 
 ## Roadmap
 

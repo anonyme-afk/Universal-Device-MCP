@@ -1,51 +1,51 @@
-# Workflow : Découverte du matériel connecté
+# Workflow: Connected Hardware Discovery
 
-## Objectif
+## Objective
 
-Lister tous les périphériques matériels accessibles par les adaptateurs locaux (USB, série, Bluetooth, réseau mDNS, Android ADB, iOS) et en obtenir un inventaire structuré.
+List all hardware devices accessible through local adapters (USB, serial, Bluetooth, mDNS network, Android ADB, iOS) and build a structured inventory.
 
 ## Preconditions
 
-- Le serveur MCP Universal Device MCP est démarré.
-- L'agent a accès aux outils `discover_devices`, `discover_wireless_devices`, `list_known_devices`, `get_runtime_status`.
+- Universal Device MCP server is running.
+- The agent has access to `discover_devices`, `discover_wireless_devices`, `list_known_devices`, and `get_runtime_status`.
 
-## Séquence recommandée
+## Recommended Sequence
 
-1. **Vérifier l'état du serveur** : `get_runtime_status`
-   - Confirmer que les adaptateurs souhaités sont disponibles (pas d'erreur de dépendance manquante).
-2. **Découvrir les appareils locaux** : `discover_devices`
-   - Optionnel : filtrer par transport si vous cherchez un type spécifique (`transports=["usb"]`, `transports=["serial"]`, etc.).
-3. **Découvrir les appareils sans fil** : `discover_wireless_devices`
-   - Pour les services BLE, mDNS, Android ADB et iOS annoncés localement.
-4. **Lister les appareils déjà connus** : `list_known_devices`
-   - Pour éviter de redécouvrir des appareils déjà en base.
+1. **Check server status**: `get_runtime_status`
+   - Confirm that desired adapters are available without missing dependency errors.
+2. **Discover local devices**: `discover_devices`
+   - Optional: filter by transport if looking for a specific type (`transports=["usb"]`, `transports=["serial"]`, etc.).
+3. **Discover wireless & network devices**: `discover_wireless_devices`
+   - Probes BLE peripherals, mDNS services, local Android ADB daemons, and iOS devices.
+4. **List previously remembered devices**: `list_known_devices`
+   - Inspect already recorded device profiles in the local SQLite database.
 
-## Outils MCP utilisés
+## MCP Tools Used
 
 - `get_runtime_status`
 - `discover_devices`
 - `discover_wireless_devices`
 - `list_known_devices`
 
-## Résultat attendu
+## Expected Output
 
-Une liste d'appareils, chacun avec :
-- `device_id` : identifiant stable à conserver pour les opérations ultérieures.
-- `transport` : type de connexion (usb, serial, bluetooth, network, adb, ios, simulator).
-- `name` : nom lisible.
-- `fingerprint` : empreinte matérielle stable.
-- `interfaces` : liste des interfaces exposées (id, kind, etc.).
+A list of detected devices, each containing:
+- `device_id`: Stable identifier to use for subsequent inspection and operations.
+- `transport`: Connection type (usb, serial, bluetooth, network, adb, ios, simulator).
+- `name`: Human-readable device name.
+- `fingerprint`: Stable hardware fingerprint.
+- `interfaces`: List of exposed interfaces (`id`, `kind`, etc.).
 
-## Gestion des erreurs
+## Error Handling
 
 | Situation | Action |
 |-----------|--------|
-| Aucun appareil trouvé | Vérifier que le matériel est branché et que l'adaptateur correspondant est installé. Relancer `discover_devices`. |
-| Dépendance manquante (`ImportError`) | Vérifier `get_runtime_status` pour voir quel adaptateur échoue. Installer l'extra Python correspondant. |
-| Erreur de permission OS | Le système d'exploitation bloque l'accès. Vérifier les paramètres de confidentialité (caméra, micro, Bluetooth, USB). |
+| No devices found | Verify hardware is physically plugged in and adapter drivers/extras are installed. Re-run `discover_devices`. |
+| Missing dependency (`ImportError`) | Check `get_runtime_status` to see which adapter failed. Install the corresponding Python package extra. |
+| OS permission error | Operating system access restricted. Check privacy permissions (Camera, Microphone, Bluetooth, USB). |
 
-## Considérations de sécurité
+## Security Considerations
 
-- Cette opération est en lecture seule. Elle ne modifie aucun matériel.
-- Aucun appareil n'est activé automatiquement.
-- Les résultats sont enregistrés en base locale uniquement si vous appelez explicitement `remember_discovery`.
+- Hardware discovery is strictly read-only. It never modifies any hardware state.
+- No physical device is energized or activated beyond bus enumeration.
+- Discovery results are persisted into the local SQLite database only when `remember_discovery` is explicitly invoked.

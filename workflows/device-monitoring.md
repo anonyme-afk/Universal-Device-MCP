@@ -1,45 +1,45 @@
-# Workflow : Surveillance des connexions d'appareils
+# Workflow: Device Connection Monitoring
 
-## Objectif
+## Objective
 
-Démarrer la surveillance en arrière-plan des connexions et déconnexions d'appareils, et réagir aux changements d'état.
+Start background monitoring of hardware connections and disconnections, reacting to state changes in real time.
 
 ## Preconditions
 
-- Le serveur MCP est démarré.
-- `UDMCP_AUTO_MONITOR` peut être laissé à sa valeur par défaut (`false` : démarrage explicite requis).
+- Universal Device MCP server is running.
+- `UDMCP_AUTO_MONITOR` can remain at default (`false`: explicit start required).
 
-## Séquence recommandée
+## Recommended Sequence
 
-1. **Démarrer le moniteur** : `start_device_monitor(interval_seconds=5.0)`
-   - Le moniteur vérifie périodiquement les appareils connectés et déconnectés.
-2. **Lire les événements** : `get_device_events(after_id=0, limit=100)`
-   - Récupérer les événements de connexion/déconnexion depuis le dernier ID connu.
-3. **Agir sur un événement** :
-   - `connected` : inspecter le nouvel appareil (`inspect_device`).
-   - `disconnected` : marquer l'appareil comme indisponible, ne plus tenter d'opérations sur son `device_id`.
-4. **Arrêter le moniteur** : `stop_device_monitor()` quand la surveillance n'est plus nécessaire.
+1. **Start the monitor**: `start_device_monitor(interval_seconds=5.0)`
+   - The background monitor periodically scans for connected and disconnected devices.
+2. **Read events**: `get_device_events(after_id=0, limit=100)`
+   - Fetch connection and disconnection events since the last known event ID.
+3. **Handle events**:
+   - `connected`: Inspect the new device (`inspect_device`).
+   - `disconnected`: Mark the device as unavailable, avoid sending further operations to its `device_id`.
+4. **Stop the monitor**: `stop_device_monitor()` when active monitoring is no longer needed.
 
-## Outils MCP utilisés
+## MCP Tools Used
 
 - `start_device_monitor`
 - `stop_device_monitor`
 - `get_device_events`
 - `inspect_device`
 
-## Résultat attendu
+## Expected Output
 
-- Événements avec `type` (`connected` ou `disconnected`), `device_id`, `details` et `created_at`.
-- État de connexion à jour pour chaque appareil connu.
+- Event entries with `type` (`connected` or `disconnected`), `device_id`, `details`, and `created_at`.
+- Up-to-date connection status for all known devices.
 
-## Gestion des erreurs
+## Error Handling
 
 | Situation | Action |
 |-----------|--------|
-| Événement sur un appareil inconnu | Relancer `discover_devices` pour mettre à jour l'inventaire. |
-| Appareil se déconnecte pendant une opération | L'opération échoue avec `RuntimeError` ou `TimeoutError`. Relancer `inspect_device` pour confirmer l'état. |
+| Event references unknown device | Run `discover_devices` to refresh the local inventory. |
+| Device disconnects during an operation | Operation fails with `RuntimeError` or `TimeoutError`. Re-run `inspect_device` to confirm current state. |
 
-## Considérations de sécurité
+## Security Considerations
 
-- Le moniteur est en lecture seule sur l'état des appareils. Il ne modifie aucun matériel.
-- Le moniteur est arrêté par défaut et doit être démarré explicitement.
+- The monitor operates in read-only mode regarding device state; it never alters hardware configurations.
+- The background monitor is stopped by default and requires explicit activation.

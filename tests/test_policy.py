@@ -70,7 +70,11 @@ class AccessPolicyTests(unittest.TestCase):
             policy_path = Path(folder) / "policy.json"
             policy_path.write_text(json.dumps({"max_write_bytes": 4}), encoding="utf-8")
             env = {"UDMCP_POLICY": str(policy_path)}
-            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "unrestricted"}):
+            with patch.dict(os.environ, {
+                **env,
+                "UDMCP_ACCESS_MODE": "unrestricted",
+                "UDMCP_UNRESTRICTED_CONFIRMED": "true",
+            }):
                 service._enforce_policy(device, "firmware_update", None, "if0")
                 service._enforce_policy(device, "erase", b"\x00", "if0")
                 service._enforce_policy(device, "execute", None, "if0")
@@ -90,7 +94,11 @@ class AccessPolicyTests(unittest.TestCase):
                 ],
             }), encoding="utf-8")
             env = {"UDMCP_POLICY": str(policy_path)}
-            with patch.dict(os.environ, {**env, "UDMCP_ACCESS_MODE": "unrestricted"}):
+            with patch.dict(os.environ, {
+                **env,
+                "UDMCP_ACCESS_MODE": "unrestricted",
+                "UDMCP_UNRESTRICTED_CONFIRMED": "true",
+            }):
                 with self.assertRaisesRegex(PermissionError, "Blocked by local policy"):
                     service._enforce_policy(device, "firmware_update", None, "if0")
                 service._enforce_policy(device, "erase", b"\x00", "if0")
@@ -98,7 +106,6 @@ class AccessPolicyTests(unittest.TestCase):
     def test_load_access_policy_accepts_unrestricted_mode(self):
         from universal_device_mcp.server import DeviceService
         service = object.__new__(DeviceService)
-        device = Device("camper", "fake", "Test", "fake:1")
         with tempfile.TemporaryDirectory() as folder:
             policy_path = Path(folder) / "policy.json"
             policy_path.write_text(json.dumps({}), encoding="utf-8")
@@ -107,10 +114,64 @@ class AccessPolicyTests(unittest.TestCase):
                 policy = service.access_policy()["policy"]
                 self.assertEqual("unrestricted", policy["access_mode"])
 
-    def test_access_modes_reject_invalid_value(self):
+    def test_unrestricted_mode_blocked_without_owner_confirmation(self):
         from universal_device_mcp.server import DeviceService
         service = object.__new__(DeviceService)
         device = Device("camper", "fake", "Test", "fake:1")
+        with tempfile.TemporaryDirectory() as folder:
+            policy_path = Path(folder) / "policy.json"
+            policy_path.write_text(json.dumps({}), encoding="utf-8")
+            env = {"UDMCP_POLICY": str(policy_path)}
+            with patch.dict(os.environ, {
+                **env,
+                "UDMCP_ACCESS_MODE": "unrestricted",
+            }):
+                with self.assertRaisesRegex(PermissionError, "not confirmed"):
+                    service._enforce_policy(device, "erase", b"\x00", "if0")
+
+    def test_confirm_unrestricted_mode_states(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        # Not confirmed
+        with patch.dict(os.environ, {}, clear=True):
+            status = service.confirm_unrestricted_mode()
+            self.assertFalse(status["unrestricted_confirmed"])
+            self.assertFalse(status["destructive_approval_bypassed"])
+            self.assertIn("NOT CONFIRMED", status["notice"])
+
+        # Confirmed, not bypassed
+        with patch.dict(os.environ, {"UDMCP_UNRESTRICTED_CONFIRMED": "true"}, clear=True):
+            status = service.confirm_unrestricted_mode()
+            self.assertTrue(status["unrestricted_confirmed"])
+            self.assertFalse(status["destructive_approval_bypassed"])
+            self.assertIn("CONFIRMED BY OWNER", status["notice"])
+            self.assertIn("a one-time", status["notice"])
+
+        # Confirmed, bypassed
+        with patch.dict(os.environ, {
+            "UDMCP_UNRESTRICTED_CONFIRMED": "true",
+            "UDMCP_UNRESTRICTED_BYPASS_APPROVAL": "true",
+        }, clear=True):
+            status = service.confirm_unrestricted_mode()
+            self.assertTrue(status["unrestricted_confirmed"])
+            self.assertTrue(status["destructive_approval_bypassed"])
+            self.assertIn("BYPASS IS ACTIVE", status["notice"])
+
+    def test_destructive_approval_bypassed_in_unrestricted_mode(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
+        device = Device("camper", "fake", "Test", "fake:1")
+        with patch.dict(os.environ, {
+            "UDMCP_ACCESS_MODE": "unrestricted",
+            "UDMCP_UNRESTRICTED_CONFIRMED": "true",
+            "UDMCP_UNRESTRICTED_BYPASS_APPROVAL": "true",
+        }):
+            # Should not raise PermissionError because approval is bypassed
+            service._require_destructive_approval(device, "erase", "if0", b"\x00")
+
+    def test_access_modes_reject_invalid_value(self):
+        from universal_device_mcp.server import DeviceService
+        service = object.__new__(DeviceService)
         with tempfile.TemporaryDirectory() as folder:
             policy_path = Path(folder) / "policy.json"
             policy_path.write_text(json.dumps({}), encoding="utf-8")

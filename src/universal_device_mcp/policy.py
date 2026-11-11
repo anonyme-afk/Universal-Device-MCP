@@ -32,6 +32,9 @@ DEFAULT_MAX_WRITE_BYTES = 4096
 
 VALID_ACCESS_MODES = {"safe", "trusted", "full", "unrestricted"}
 
+UNRESTRICTED_CONFIRMED_ENV = "UDMCP_UNRESTRICTED_CONFIRMED"
+UNRESTRICTED_BYPASS_APPROVAL_ENV = "UDMCP_UNRESTRICTED_BYPASS_APPROVAL"
+
 
 def load_access_policy() -> dict[str, Any]:
     """Load the local access policy from UDMCP_POLICY and UDMCP_ACCESS_MODE.
@@ -57,6 +60,28 @@ def load_access_policy() -> dict[str, Any]:
     policy.setdefault("max_write_bytes", DEFAULT_MAX_WRITE_BYTES)
     policy["access_mode"] = mode
     return {"path": policy_path, "policy": policy}
+
+
+def is_unrestricted_confirmed() -> bool:
+    """Return True only if the owner has explicitly confirmed unrestricted mode.
+
+    The confirmation is stored in UDMCP_UNRESTRICTED_CONFIRMED=true and is not
+    persisted across server restarts. The AI cannot set this value through an
+    MCP tool; only the computer owner can set the environment variable.
+    """
+    return os.environ.get(UNRESTRICTED_CONFIRMED_ENV, "false").lower() in {
+        "1", "true", "yes"}
+
+
+def is_destructive_approval_bypassed() -> bool:
+    """Return True if the owner has disabled per-operation destructive approval.
+
+    When UDMCP_UNRESTRICTED_BYPASS_APPROVAL=true, destructive operations no
+    longer require a one-time approval in unrestricted mode. This is an
+    owner-controlled opt-out and is clearly flagged in the access policy.
+    """
+    return os.environ.get(UNRESTRICTED_BYPASS_APPROVAL_ENV, "false").lower() in {
+        "1", "true", "yes"}
 
 
 def require_media_capture() -> None:
@@ -87,6 +112,15 @@ def enforce_access_policy(
     # UDMCP_POLICY still apply in every mode, including unrestricted, because
     # they represent an express owner decision. Size limits (max_write_bytes)
     # are retained in every mode as a safety guardrail.
+    #
+    # Unrestricted mode additionally requires an explicit owner confirmation
+    # (UDMCP_UNRESTRICTED_CONFIRMED=true). Without it, every operation is
+    # blocked as if the mode were safe.
+    if mode == "unrestricted" and not is_unrestricted_confirmed():
+        raise PermissionError(
+            "Unrestricted access mode is not confirmed by the owner. "
+            "Set UDMCP_UNRESTRICTED_CONFIRMED=true and confirm explicitly "
+            "before using destructive operations.")
     if mode != "unrestricted" and operation_lower in CRITICAL_OPERATIONS:
         raise PermissionError(f"Critical operation {operation!r} is blocked in every access mode")
 

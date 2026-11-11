@@ -1,191 +1,194 @@
-# Workflow Universal Device MCP pour agents IA
+# Universal Device MCP — AI Agent Workflow
 
-Ce document est une couche d'instructions réutilisable entre un agent IA et le serveur **Universal Device MCP**. Il est indépendant de toute plateforme ( Claude, OpenAI, etc.) et ne dépend d'aucun marketplace spécifique.
+This document is a reusable instruction layer between an AI agent and the **Universal Device MCP** server. It is independent of any platform (Claude, OpenAI, etc.) and does not depend on any specific marketplace.
 
-## Objectif
+## Objective
 
-Permettre à un agent IA de :
-1. Découvrir le matériel connecté à l'ordinateur hôte.
-2. Inspecter les interfaces et capacités de chaque appareil.
-3. Exécuter des opérations de manière sécurisée, en respectant les politiques d'accès locales.
-4. Vérifier que les opérations ont réussi.
-5. Gérer les erreurs, les appareils indisponibles et les opérations non supportées.
+Enable an AI agent to:
+1. Discover hardware connected to the host computer.
+2. Inspect interfaces and capabilities of each device.
+3. Execute operations securely, respecting local access policies.
+4. Verify that operations succeeded.
+5. Handle errors, unavailable devices, and unsupported operations.
 
-## Quand utiliser Universal Device MCP
+## When to use Universal Device MCP
 
-Utilisez ce serveur lorsque vous devez :
-- Découvrir du matériel local (USB, série, Bluetooth, réseau mDNS, Android ADB, iOS).
-- Lire ou écrire sur des interfaces matérielles de manière générique.
-- Conserver un inventaire persistant des appareils découverts entre sessions.
-- Exécuter des opérations sur plusieurs appareils simultanément (lectures indépendantes).
-- Contrôler des appareils simulés pour des tests sans matériel physique.
-- Interagir avec des nœuds MCP distants (mode hub/node).
+Use this server when you need to:
+- Discover local hardware (USB, serial, Bluetooth, mDNS network, Android ADB, iOS).
+- Read or write on hardware interfaces generically.
+- Maintain a persistent inventory of discovered devices across sessions.
+- Execute operations on multiple devices simultaneously (independent reads).
+- Control simulated devices for testing without physical hardware.
+- Interact with remote MCP nodes (hub/node mode).
 
-**N'utilisez pas ce serveur pour :**
-- Contrôler du matériel dont le protocole est inconnu et non documenté (le serveur ne devine pas les formats propriétaires).
-- Accéder à du matériel sans les permissions du système d'exploitation (Windows, macOS, Linux restent autorité).
-- En mode `unrestricted`, effectuer des opérations destructives sans avoir obtenu une approbation ponctuelle explicite via `authorize_destructive_operation` — l'IA ne peut pas s'accorder cette approbation elle-même.
+**Do not use this server for:**
+- Controlling hardware whose protocol is unknown and undocumented (the server does not guess proprietary formats).
+- Accessing hardware without operating system permissions (Windows, macOS, Linux remain authoritative).
+- In `unrestricted` mode, performing destructive operations without obtaining an explicit one-time approval via `authorize_destructive_operation` — the AI cannot grant this approval to itself.
 
-## 1. Découverte des appareils
+## 1. Device Discovery
 
-### Étape 1 — Vérifier l'état du serveur
+### Step 1 — Check server status
 
-Avant toute découverte, vérifiez que le serveur fonctionne et que les adaptateurs sont disponibles.
+Before any discovery, verify that the server is running and adapters are available.
 
-**Outil :** `get_runtime_status()`
+**Tool:** `get_runtime_status()`
 
-Ce que vous obtenez :
-- Version Python et plateforme OS.
-- État de chaque adaptateur (USB, HID, Serial, Bluetooth, Network, iOS, ADB).
-- Chemin de la base de données locale.
-- Erreurs de chargement de plugins éventuels.
+What you get:
+- Python version and OS platform.
+- Status of each adapter (USB, HID, Serial, Bluetooth, Network, iOS, ADB).
+- Local database path.
+- Plugin load errors if any.
 
-### Étape 2 — Découvrir les appareils locaux
+### Step 2 — Discover local devices
 
-**Outil :** `discover_devices(transports?)`
+**Tool:** `discover_devices(transports?)`
 
-Paramètre optionnel `transports` : tableau de chaînes (ex: `["usb"]`, `["bluetooth"]`, `["serial"]`). Transports supportés : usb, hid, serial, bluetooth, adb, ios, network, simulator.
+Optional parameter `transports`: array of strings (e.g. `["usb"]`, `["bluetooth"]`, `["serial"]`). Supported transports: usb, hid, serial, bluetooth, adb, ios, network, simulator.
 
-Résultat : une liste d'appareils avec `device_id`, `transport`, `name`, `fingerprint`, `identity`, `hardware`, `interfaces`.
+Result: a list of devices with `device_id`, `transport`, `name`, `fingerprint`, and detected interfaces.
 
-### Étape 3 — Découvrir les appareils sans fil (optionnel)
+### Step 3 — Discover wireless and network devices
 
-**Outil :** `discover_wireless_devices()`
+**Tool:** `discover_wireless_devices()`
 
-Découvre les services BLE, mDNS, Android ADB et iOS mobdev2 annoncés localement. Aucun paramètre.
+Covers BLE peripherals, local mDNS services, wireless Android ADB endpoints, and iOS devices.
 
-### Étape 4 — Lister les appareils déjà connus
+### Step 4 — List remembered devices
 
-**Outil :** `list_known_devices()`
+**Tool:** `list_known_devices()`
 
-Retourne les profils enregistrés dans la base de données locale SQLite. Aucun paramètre.
+Lists devices saved in the local SQLite knowledge database. No parameters.
 
-## 2. Inspection des capacités d'un appareil
+## 2. Device Capability Inspection
 
-### Étape 1 — Inspecter un appareil spécifique
+### Step 1 — Inspect a specific device
 
-**Outil :** `inspect_device(device_id)`
+**Tool:** `inspect_device(device_id)`
 
-Nécessite un `device_id` exact obtenu lors de la découverte.
+Requires an exact `device_id` obtained from discovery.
 
-Résultat : profil complet avec interfaces, état de connexion et métadonnées.
+Result: full profile with interfaces, connection state, and metadata.
 
-### Étape 2 — Comprendre une interface
+### Step 2 — Understand an interface
 
-**Outil :** `explain_device_interface(device_id, interface_id)`
+**Tool:** `explain_device_interface(device_id, interface_id)`
 
-Donne une description lisible de ce que fait une interface sans prétendre que son protocole est compris.
+Provides a readable description of what an interface does without claiming its protocol is understood.
 
-### Étape 3 — Voir les capacités globales
+### Step 3 — View global capabilities
 
-**Outil :** `get_device_capabilities(device_id)`
+**Tool:** `get_device_capabilities(device_id)`
 
-Résumé des interfaces observées et des découvertes de protocole enregistrées avec leurs labels de confiance.
+Summary of observed interfaces and saved protocol discoveries with their confidence labels.
 
-### Étape 4 — Voir les protocoles supportés
+### Step 4 — View supported protocols
 
-**Outil :** `get_supported_protocols()`
+**Tool:** `get_supported_protocols()`
 
-Liste les implémentations de transport disponibles et leurs classes d'adaptateur.
+Lists available transport implementations and their adapter classes.
 
-## 3. Sélection de l'outil MCP approprié
+## 3. Selecting the Right MCP Tool
 
-Utilisez ce tableau pour choisir l'outil selon votre objectif :
+Use this table to choose the appropriate tool for your task:
 
-| Objectif | Outil MCP | Lecture / Écriture |
-|----------|-----------|---------------------|
-| Découvrir le matériel local | `discover_devices` | Lecture |
-| Découvrir le matériel sans fil | `discover_wireless_devices` | Lecture |
-| Lister les appareils connus | `list_known_devices` | Lecture |
-| Voir l'état du serveur | `get_runtime_status` | Lecture |
-| Inspecter un appareil | `inspect_device` | Lecture |
-| Comprendre une interface | `explain_device_interface` | Lecture |
-| Capacités d'un appareil | `get_device_capabilities` | Lecture |
-| Protocoles supportés | `get_supported_protocols` | Lecture |
-| Communiquer génériquement | `communicate_device` | Lecture ou écriture |
-| Plusieurs lectures simultanées | `communicate_many` | Lecture |
-| Ouvrir une interface persistante | `open_interface` | Écriture (session) |
-| Fermer une interface | `close_interface` | Écriture (session) |
-| Lire des événements | `get_device_events` | Lecture |
-| Voir la politique d'accès | `get_access_policy` | Lecture |
-| Recharger la politique | `reload_access_policy` | Lecture |
-| Connecter un appareil | `connect_device` | Écriture (état) |
-| Déconnecter un appareil | `disconnect_device` | Écriture (état) |
-| Supprimer une expérience | `delete_device_experiment` | Écriture (historique) |
-| Caméra : découverte | `discover_cameras` | Lecture |
-| Caméra : capture | `capture_camera_image` | Écriture (mémoire) |
-| Micro : découverte | `discover_microphones` | Lecture |
-| Micro : enregistrement | `record_audio_sample` | Écriture (mémoire) |
-| Groupe : créer | `create_device_group` | Écriture (mémoire) |
-| Groupe : lire | `read_device_group` | Lecture |
-| Groupe : préparation écriture | `prepare_group_write` | Écriture (plan) |
-| Groupe : exécution approuvée | `execute_approved_group_write` | Écriture (nécessite approbation humaine) |
-| Groupe : supprimer | `delete_device_group` | Écriture (mémoire) |
-| Rappeler une découverte | `remember_discovery` | Écriture (mémoire) |
-| Mettre à jour un profil | `update_device_profile` | Écriture (mémoire) |
-| Voir la connaissance | `get_device_knowledge` | Lecture |
-| Exporter un profil | `export_device_profile` | Lecture |
-| Oublier un appareil | `forget_device` | Écriture (suppression) |
-| Analyser une charge utile | `analyze_payload` | Lecture |
-| Générer un rapport | `generate_device_report` | Lecture |
-| Diagnostics | `run_device_diagnostics` | Lecture |
-| Démarrer le moniteur | `start_device_monitor(interval_seconds?)` | Écriture (surveillance) |
-| Arrêter le moniteur | `stop_device_monitor()` | Écriture (surveillance) |
-| Nœud distant : lister | `list_remote_nodes()` | Lecture |
-| Nœud distant : découvrir | `discover_remote_devices()` | Lecture |
-| Nœud distant : lire | `read_remote_devices(targets, operation?)` | Lecture |
-| Android Wi-Fi : appairer | `pair_android_over_wifi(endpoint, pairing_code)` | Écriture |
-| Android Wi-Fi : connecter | `connect_android_over_wifi(endpoint)` | Écriture |
-| Approuver opération destructive | `authorize_destructive_operation(device_id, operation, interface_id?, data_hex?)` | Écriture (sécurité) |
-| Révoquer approbation destructive | `discard_destructive_approval(approval_id)` | Écriture (sécurité) |
+| Objective | MCP Tool | Read / Write |
+|-----------|----------|--------------|
+| Discover local hardware | `discover_devices` | Read |
+| Discover wireless hardware | `discover_wireless_devices` | Read |
+| List remembered devices | `list_known_devices` | Read |
+| Check server status | `get_runtime_status` | Read |
+| Inspect a device | `inspect_device` | Read |
+| Understand an interface | `explain_device_interface` | Read |
+| Device capabilities summary | `get_device_capabilities` | Read |
+| List supported protocols | `get_supported_protocols` | Read |
+| Generic communication | `communicate_device` | Read or Write |
+| Concurrent reads | `communicate_many` | Read |
+| Open persistent session | `open_interface` | Write (session) |
+| Close persistent session | `close_interface` | Write (session) |
+| Read device events | `get_device_events` | Read |
+| View access policy | `get_access_policy` | Read |
+| Reload access policy | `reload_access_policy` | Read |
+| Connect device | `connect_device` | Write (state) |
+| Disconnect device | `disconnect_device` | Write (state) |
+| Delete experiment record | `delete_device_experiment` | Write (history) |
+| Camera: discover | `discover_cameras` | Read |
+| Camera: capture image | `capture_camera_image` | Write (in-memory) |
+| Microphone: discover | `discover_microphones` | Read |
+| Microphone: record sample | `record_audio_sample` | Write (in-memory) |
+| Device group: create | `create_device_group` | Write (memory) |
+| Device group: read | `read_device_group` | Read |
+| Device group: prepare write | `prepare_group_write` | Write (plan) |
+| Device group: execute write | `execute_approved_group_write` | Write (requires human approval) |
+| Device group: delete | `delete_device_group` | Write (memory) |
+| Remember discovery | `remember_discovery` | Write (database) |
+| Update device profile | `update_device_profile` | Write (database) |
+| View device knowledge | `get_device_knowledge` | Read |
+| Export device profile | `export_device_profile` | Read |
+| Forget device | `forget_device` | Write (deletion) |
+| Analyze binary payload | `analyze_payload` | Read |
+| Generate device report | `generate_device_report` | Read |
+| Run device diagnostics | `run_device_diagnostics` | Read |
+| Start connection monitor | `start_device_monitor(interval_seconds?)` | Write (monitoring) |
+| Stop connection monitor | `stop_device_monitor()` | Write (monitoring) |
+| Remote node: list | `list_remote_nodes()` | Read |
+| Remote node: discover | `discover_remote_devices()` | Read |
+| Remote node: read | `read_remote_devices(targets, operation?)` | Read |
+| Android Wi-Fi: pair | `pair_android_over_wifi(endpoint, pairing_code)` | Write |
+| Android Wi-Fi: connect | `connect_android_over_wifi(endpoint)` | Write |
+| Authorize destructive operation | `authorize_destructive_operation(device_id, operation, interface_id?, data_hex?)` | Write (security) |
+| Revoke destructive approval | `discard_destructive_approval(approval_id)` | Write (security) |
+| Confirm unrestricted mode | `confirm_unrestricted_mode()` | Read (security) |
 
-## 4. Exécution sécurisée d'une opération
+## 4. Secure Operation Execution
 
-### Règle d'or : jamais d'hypothèse
+### Golden Rule: Never assume
 
-Avant d'appeler un outil d'écriture :
-1. Vérifiez que l'appareil existe et est connecté (`inspect_device`, champ `connected`).
-2. Vérifiez que l'interface existe (`interfaces` dans le résultat d'inspection).
-3. Lisez la politique d'accès (`get_access_policy`) pour connaître le mode (`safe`, `trusted`, `full`) et les règles autorisées.
-4. Lisez la description de l'interface (`explain_device_interface`).
+Before executing any write operation:
+1. Verify the device exists and is currently connected (`inspect_device`, field `connected`).
+2. Verify the interface exists (`interfaces` in inspection output).
+3. Check the access policy (`get_access_policy`) to determine current mode (`safe`, `trusted`, `full`, `unrestricted`) and allowed rules.
+4. Read interface semantics (`explain_device_interface`).
 
-### Modes d'accès
+### Access Modes
 
-Le mode est défini localement par le propriétaire de l'ordinateur via la variable d'environnement `UDMCP_ACCESS_MODE`. Un agent IA **ne peut pas le changer**.
+The access mode is set locally by the computer owner via the `UDMCP_ACCESS_MODE` environment variable. An AI agent **cannot modify it**.
 
-| Mode | Comportement |
-|------|-------------|
-| `safe` (défaut) | Lectures autorisées. Écritures bloquées sans règle exacte (transport, device_id, interface_id, opération). |
-| `trusted` | Lectures toujours autorisées. Écritures/ouvertures autorisées si l'appareil figure dans `trusted_devices` ET l'opération figure dans `trusted_operations` (défaut: open, read, receive, write, send, communicate, control_write), ou si une règle `allowed_operations` exacte correspond. |
-| `full` | Opérations non critiques sans règle par opération, mais limites de taille, refus explicites, audit et blocages d'opérations critiques conservés. |
-| `unrestricted` | Toutes les opérations (y compris `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`) ne sont plus bloquées par défaut. **Cependant**, chaque opération destructive requiert une approbation ponctuelle explicite via `authorize_destructive_operation` (l'IA ne peut pas s'accorder cette approbation elle-même). Les refus explicites (`denied_operations`) et les limites de taille s'appliquent toujours. |
+| Mode | Behavior |
+|------|----------|
+| `safe` (default) | Reads allowed. Writes blocked unless covered by an exact rule (transport, device_id, interface_id, operation). |
+| `trusted` | Reads always allowed. Writes/opens allowed if device is in `trusted_devices` AND operation is in `trusted_operations` (default: open, read, receive, write, send, communicate, control_write), or if an exact `allowed_operations` rule matches. |
+| `full` | Non-critical operations permitted without per-operation rules, but size limits, explicit denies, auditing, and critical operation blocks remain enforced. |
+| `unrestricted` | All operations (including `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`) are no longer blocked by default. **However**, each destructive operation requires an explicit one-time human approval via `authorize_destructive_operation` (the AI cannot grant this approval to itself). Explicit denies (`denied_operations`) and payload size limits still apply. |
 
 ## MCP Resources
 
-Le serveur expose deux ressources MCP (lecture seule, accessibles via `read_resource`) :
+The server exposes two MCP resources (read-only, accessed via `read_resource`):
 
 | Resource | Description |
 |----------|-------------|
-| `udmcp://devices` | Inventaire local des appareils connus et profils techniques mémorisés (JSON). |
-| `udmcp://devices/{device_id}/profile` | Profil d'un appareil, ses découvertes, expériences et historique (JSON). |
+| `udmcp://devices` | Local inventory of known devices and saved technical profiles (JSON). |
+| `udmcp://devices/{device_id}/profile` | Detailed device profile, findings, experiments, and history (JSON). |
 
-## Configuration variables d'environnement
+## Environment Variables Configuration
 
-| Variable | Valeurs | Description |
-|----------|---------|-------------|
-| `UDMCP_ACCESS_MODE` | `safe` (défaut), `trusted`, `full`, `unrestricted` | Mode d'accès sélectionné par le propriétaire local. |
-| `UDMCP_POLICY` | Chemin fichier JSON | Chemin vers le fichier de politique d'accès locale. |
-| `UDMCP_DATABASE` | Chemin fichier | Chemin de la base de données SQLite des profils d'appareils. |
-| `UDMCP_MEDIA_CAPTURE` | `true` (opt-in) | Active la capture caméra/microphone. Requis pour `discover_cameras`, `capture_camera_image`, `discover_microphones`, `record_audio_sample`. |
-| `UDMCP_AUTO_MONITOR` | `false` (défaut), `true` | Démarre automatiquement le moniteur de connexion au lancement. |
-| `UDMCP_STORE_PAYLOADS` | `false` (défaut), `true` | Conserve les charges utiles des expériences en base de données. |
-| `UDMCP_RETENTION_DAYS` | Nombre (défaut: 30) | Durée de rétention de l'historique des événements. |
-| `UDMCP_ROLE` | `standalone` (défaut), `node`, `hub` | Rôle du serveur dans une architecture multi-nœuds. |
-| `UDMCP_TRANSPORT` | `stdio` (défaut), `streamable-http` | Transport de communication du serveur MCP. |
-| `UDMCP_HTTP_HOST` | `127.0.0.1` (défaut) | Hôte pour le transport HTTP. |
-| `UDMCP_HTTP_PORT` | `8000` (défaut) | Port pour le transport HTTP. |
+| Variable | Values | Description |
+|----------|--------|-------------|
+| `UDMCP_ACCESS_MODE` | `safe` (default), `trusted`, `full`, `unrestricted` | Access mode selected by the local computer owner. |
+| `UDMCP_POLICY` | JSON file path | Path to local policy configuration file. |
+| `UDMCP_DATABASE` | File path | Path to SQLite device profile database. |
+| `UDMCP_MEDIA_CAPTURE` | `true` (opt-in) | Enables camera and microphone tools. Required for `discover_cameras`, `capture_camera_image`, `discover_microphones`, `record_audio_sample`. |
+| `UDMCP_AUTO_MONITOR` | `false` (default), `true` | Automatically starts background connection monitoring on launch. |
+| `UDMCP_STORE_PAYLOADS` | `false` (default), `true` | Retains raw payloads of experiments in local database. |
+| `UDMCP_RETENTION_DAYS` | Integer (default: 30) | Event log retention period in days. |
+| `UDMCP_ROLE` | `standalone` (default), `node`, `hub` | Server role in distributed multi-node setups. |
+| `UDMCP_TRANSPORT` | `stdio` (default), `streamable-http` | MCP communication transport. |
+| `UDMCP_HTTP_HOST` | `127.0.0.1` (default) | Host for HTTP transport. |
+| `UDMCP_HTTP_PORT` | `8000` (default) | Port for HTTP transport. |
+| `UDMCP_UNRESTRICTED_CONFIRMED` | `true`, `false` | Explicit owner confirmation required for unrestricted mode. |
+| `UDMCP_UNRESTRICTED_BYPASS_APPROVAL` | `true`, `false` | Owner opt-out for per-operation destructive approval in unrestricted mode. |
 
-### Format du fichier de politique (UDMCP_POLICY)
+### Policy File Format (UDMCP_POLICY)
 
 ```json
 {
@@ -201,75 +204,78 @@ Le serveur expose deux ressources MCP (lecture seule, accessibles via `read_reso
 }
 ```
 
-Les règles utilisent `*` comme joker pour transport, operation, device_id et interface_id.
+Rules support `*` as a wildcard for transport, operation, device_id, and interface_id.
 
-### Opérations critiques et mode unrestricted
+### Critical Operations and Unrestricted Mode
 
-Dans les modes `safe`, `trusted` et `full`, les opérations suivantes sont toujours bloquées :
+In `safe`, `trusted`, and `full` modes, the following operations are always blocked:
 - `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`.
 
-Dans le mode `unrestricted`, ces opérations ne sont plus bloquées par défaut, mais chacune requiert une **approbation ponctuelle explicite** via l'outil `authorize_destructive_operation` avant d'être exécutée. L'approbation expire après 120 secondes et est consommée à la première utilisation. L'IA ne peut pas s'accorder cette approbation elle-même.
+In `unrestricted` mode, these operations are no longer blocked by default, but each requires an **explicit one-time approval** via `authorize_destructive_operation` before execution. Approvals expire after 120 seconds and are consumed on first use. The AI cannot grant this approval to itself.
 
-Les règles de refus explicites (`denied_operations`) du fichier `UDMCP_POLICY` s'appliquent dans **tous** les modes, y compris `unrestricted`, car elles représentent une décision expresse du propriétaire. Les limites de taille (`max_write_bytes`) s'appliquent également dans tous les modes.
+Explicit denial rules (`denied_operations`) in `UDMCP_POLICY` apply across **all** modes, including `unrestricted`, because they represent an express decision by the device owner. Size limits (`max_write_bytes`) also apply in all modes.
 
-### Limites de taille
+### Size Limits
 
-- Écriture unique : `max_write_bytes` (défaut 4096 octets, configurable dans la politique).
-- Groupe écriture : 32 cibles maximum, 4096 octets maximum.
+- Single write: `max_write_bytes` (default 4096 bytes, configurable in policy).
+- Group write: Maximum 32 targets, 4096 bytes per target.
 
-### Confirmation explicite pour les écritures de groupe
+### Explicit Confirmation for Group Writes
 
-`prepare_group_write` crée un plan gelé. `execute_approved_group_write` nécessite une approbation humaine via l'élicitation MCP. Un agent IA ne peut pas exécuter une écriture de groupe sans cette approbation.
+`prepare_group_write` creates a frozen execution plan. `execute_approved_group_write` requires human approval via MCP elicitation. An AI agent cannot execute a group write without explicit human authorization.
 
-### Médias (caméra / microphone)
+### Media Captures (Camera / Microphone)
 
-Nécessitent `UDMCP_MEDIA_CAPTURE=true` (opt-in du propriétaire). Rien n'est activé automatiquement. Les captures sont en mémoire, non écrites sur disque.
+Requires `UDMCP_MEDIA_CAPTURE=true` (owner opt-in). Nothing is activated automatically. Captures remain strictly in memory and are never persisted to disk.
 
-## 5. Vérification du succès d'une opération
+## 5. Verifying Operation Success
 
-Après chaque appel d'outil :
+After each tool call:
 
-1. Vérifiez que le résultat n'est pas une erreur (champ `error` ou exception levée).
-2. Pour une écriture : vérifiez que le résultat indique `success: true` ou l'équivalent selon l'outil.
-3. Pour une lecture : vérifiez que les données retournées sont cohérentes avec la demande.
-4. Pour une opération de groupe : vérifiez les résultats par cible (chaque cible a son propre résultat, les échecs partiels sont possibles).
-5. Ne jamais déclarer une opération réussie sans preuve dans le résultat de l'outil.
+1. Check that the result does not contain an error (`error` field or exception).
+2. For writes: verify `success: true` or equivalent tool-specific acknowledgment.
+3. For reads: verify that returned payload data matches the request.
+4. For group operations: inspect results per target (each target has its own status; partial failures can occur).
+5. Never state an operation succeeded without explicit proof in the tool's response payload.
 
-## 6. Gestion des erreurs
+## 6. Error Handling
 
-### Types d'erreurs courants
+### Common Error Types
 
-| Situation | Cause probable | Action |
-|-----------|---------------|--------|
-| `KeyError: Unknown device` | `device_id` inexistant ou appareil oublié | Relancer `discover_devices` |
-| `PermissionError` | Politique `safe` sans règle exacte, ou mode restreint | Demander à l'utilisateur de configurer la politique locale |
-| `RuntimeError: not currently connected` | Appareil non connecté | Appeler `connect_device` d'abord |
-| `TimeoutError` | Opération matérielle bloquée | Réessayer avec un timeout plus court ou abandonner |
-| `ImportError` | Dépendance optionnelle manquante (ex: `usb`, `hid`) | Installer l'extra correspondant |
-| `ValueError` | Paramètre invalide (ex: durée audio hors limites) | Corriger les paramètres selon la doc de l'outil |
+| Situation | Probable Cause | Action |
+|-----------|----------------|--------|
+| `KeyError: Unknown device` | Missing `device_id` or forgotten device | Re-run `discover_devices` |
+| `PermissionError` | Safe mode policy restriction or restricted operation | Ask owner to adjust local policy |
+| `RuntimeError: not currently connected` | Device disconnected | Call `connect_device` first |
+| `TimeoutError` | Hardware bus operation stalled | Retry with shorter timeout or abort |
+| `ImportError` | Missing optional dependency (e.g. `usb`, `hid`) | Install corresponding package extra |
+| `ValueError` | Invalid parameter (e.g. audio duration out of range) | Correct arguments according to tool documentation |
 
-### Appareil indisponible
+### Unavailable Device
 
-Si un appareil ne répond pas :
-1. Vérifiez son état de connexion (`inspect_device`).
-2. Essayez `disconnect_device` puis `connect_device`.
-3. Si l'appareil physique est débranché, relancez `discover_devices`.
-4. Ne considérez jamais un appareil déconnecté comme définitivement perdu sans nouvelle découverte.
+If a device does not respond:
+1. Check its connection status (`inspect_device`).
+2. Try `disconnect_device` followed by `connect_device`.
+3. If the physical cable was disconnected, re-run `discover_devices`.
+4. Never assume a disconnected device is permanently gone without re-running discovery.
 
-## 7. Communication des résultats à l'utilisateur
+## 7. Communicating Results to the User
 
-- Présentez clairement le `device_id`, le `transport` et le `name` de chaque appareil concerné.
-- Distinguez les succès des échecs par cible (surtout pour `communicate_many` et les groupes).
-- Indiquez si une opération a été bloquée par la politique d'accès.
-- Ne jamais inventer d'informations sur un appareil. Si le serveur ne retourne pas une propriété, indiquez qu'elle est inconnue.
-- Pour les captures média : indiquez que l'image/son est en mémoire, non persistante, et donnez le format MIME.
+- Clearly report `device_id`, `transport`, and `name` for each device involved.
+- Clearly distinguish between successes and failures per target (especially for `communicate_many` and groups).
+- Indicate when an operation was blocked by access policy.
+- Never invent device properties or behaviors. If an attribute was not returned by the server, report it as unknown.
+- For media captures: specify that media is in-memory only, non-persistent, and provide MIME format details.
 
-## Limites connues
+## Known Limitations
 
-- Le serveur est une couche d'accès générique, pas une garantie que tout matériel est contrôlable.
-- Les protocoles propriétaires non documentés restent des expériences jusqu'à validation.
-- Dans les modes `safe`, `trusted` et `full`, les opérations `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock` et `execute` sont bloquées. En mode `unrestricted`, elles ne sont plus bloquées par défaut mais requièrent une approbation ponctuelle via `authorize_destructive_operation`.
-- L'IA ne peut pas changer le mode d'accès (`safe`/`trusted`/`full`/`unrestricted`) — c'est réservé au propriétaire local.
-- Les captures caméra/audio sont limitées (une image JPEG ≤ 900 Ko, ≤ 10 s de WAV mono 16 kHz, pas de flux continu).
-- Les écritures de groupe nécessitent une approbation humaine explicite via MCP elicitation.
-- Les règles `denied_operations` du fichier `UDMCP_POLICY` s'appliquent dans tous les modes, y compris `unrestricted`.
+- The server is a generic access layer, not a guarantee that all hardware is controllable.
+- Undocumented proprietary protocols remain experiments until validated.
+- In `safe`, `trusted`, and `full` modes, the following operations are always blocked: `flash`, `firmware_update`, `erase`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`.
+- In `unrestricted` mode, these operations are no longer blocked by default but require a one-time explicit approval via `authorize_destructive_operation`.
+- The AI cannot change the access mode (`safe`/`trusted`/`full`/`unrestricted`) — reserved for the local owner.
+- Camera/audio captures are limited (one JPEG ≤ 900 KB, ≤ 10 s of mono 16 kHz WAV, no continuous streams).
+- Group writes require explicit human approval via MCP elicitation.
+- The `denied_operations` rules in `UDMCP_POLICY` apply in all modes, including `unrestricted`.
+- The `UDMCP_UNRESTRICTED_CONFIRMED` and `UDMCP_UNRESTRICTED_BYPASS_APPROVAL` environment variables must be set by the computer owner; the AI cannot set them.
+- The `confirm_unrestricted_mode()` tool only reports the current state; it does not set the confirmation itself.

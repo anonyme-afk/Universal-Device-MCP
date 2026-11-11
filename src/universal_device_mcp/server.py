@@ -52,6 +52,8 @@ from .payload_analysis import analyze_payload as analyze_bytes
 from .policy import (
     DESTRUCTIVE_OPERATIONS,
     enforce_access_policy,
+    is_destructive_approval_bypassed,
+    is_unrestricted_confirmed,
     load_access_policy,
     require_media_capture,
 )
@@ -643,6 +645,11 @@ class DeviceService:
             return
         if operation.lower() not in DESTRUCTIVE_OPERATIONS:
             return
+        # Owner-controlled opt-out: destructive approvals can be bypassed entirely
+        # when UDMCP_UNRESTRICTED_BYPASS_APPROVAL=true. This is clearly flagged
+        # in get_access_policy() and in server logs.
+        if is_destructive_approval_bypassed():
+            return
         data_hex = data.hex() if data else None
         with self._destructive_approval_lock:
             now = time.monotonic()
@@ -727,6 +734,28 @@ class DeviceService:
         """Revoke a pending destructive operation approval."""
         with self._destructive_approval_lock:
             return self._pending_destructive_approvals.pop(approval_id, None) is not None
+
+    def confirm_unrestricted_mode(self) -> dict[str, Any]:
+        """Report whether unrestricted mode is owner-confirmed.
+
+        The confirmation itself is set by the computer owner through the local
+        environment variable UDMCP_UNRESTRICTED_CONFIRMED=true. The AI cannot
+        grant this confirmation; it can only read the current state.
+        """
+        confirmed = is_unrestricted_confirmed()
+        bypassed = is_destructive_approval_bypassed()
+        return {
+            "unrestricted_confirmed": confirmed,
+            "destructive_approval_bypassed": bypassed,
+            "notice": (
+                "UNRESTRICTED MODE IS NOT CONFIRMED. Destructive operations are blocked "
+                "until the owner sets UDMCP_UNRESTRICTED_CONFIRMED=true."
+            ) if not confirmed else (
+                "UNRESTRICTED MODE CONFIRMED BY OWNER. Destructive operations require "
+                + ("no" if bypassed else "a one-time") + " explicit approval. "
+                + ("BYPASS IS ACTIVE — USE AT YOUR OWN RISK." if bypassed else "")
+            ),
+        }
 
     def explain_interface(self, device_id: str, interface_id: str) -> dict[str, Any]:
         device, _ = self._device(device_id)
@@ -898,7 +927,25 @@ def get_device_events(after_id: int = 0, limit: int = 100) -> dict[str, Any]:
                                         idempotent=True, open_world=False))
 def get_access_policy() -> dict[str, Any]:
     """Show the locally selected access mode and policy; SAFE is the default."""
-    return _json(service.access_policy())
+    policy = service.access_policy()
+    if policy["policy"]["access_mode"] == "unrestricted":
+        confirmed = is_unrestricted_confirmed()
+        bypassed = is_destructive_approval_bypassed()
+        policy["unrestricted_confirmed"] = confirmed
+        policy["destructive_approval_bypassed"] = bypassed
+        if not confirmed:
+            policy["notice"] = (
+                "UNRESTRICTED MODE IS NOT CONFIRMED. All operations are blocked "
+                "until the owner sets UDMCP_UNRESTRICTED_CONFIRMED=true.")
+        elif bypassed:
+            policy["notice"] = (
+                "UNRESTRICTED MODE CONFIRMED. Destructive approval bypass is ACTIVE. "
+                "USE AT YOUR OWN RISK.")
+        else:
+            policy["notice"] = (
+                "UNRESTRICTED MODE CONFIRMED. Destructive operations require a "
+                "one-time explicit approval via authorize_destructive_operation.")
+    return _json(policy)
 
 
 def _require_media_capture() -> None:
@@ -1358,6 +1405,19 @@ def discard_destructive_approval(approval_id: str) -> dict[str, Any]:
     if not ok:
         raise KeyError(f"Unknown destructive approval {approval_id!r}")
     return _json({"revoked": approval_id})
+
+
+@mcp.tool(annotations=_tool_annotations(read_only=True, destructive=False,
+                                        idempotent=True, open_world=False))
+def confirm_unrestricted_mode() -> dict[str, Any]:
+    """Report whether unrestricted access mode is owner-confirmed.
+
+    The confirmation is set by the computer owner through the local environment
+    variable UDMCP_UNRESTRICTED_CONFIRMED=true. The AI cannot grant this
+    confirmation; it can only read the current state. Without confirmation,
+    unrestricted mode blocks all operations as if it were safe mode.
+    """
+    return _json(service.confirm_unrestricted_mode())
 
 
 @mcp.resource("udmcp://devices", name="Known device profiles",

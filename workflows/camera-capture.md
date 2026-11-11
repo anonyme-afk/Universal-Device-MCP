@@ -1,43 +1,43 @@
-# Workflow : Capture d'image avec une caméra
+# Workflow: Image Capture with a Camera
 
-## Objectif
+## Objective
 
-Détecter les caméras disponibles et capturer une image JPEG en mémoire.
+Detect available cameras and capture an in-memory JPEG frame.
 
 ## Preconditions
 
-- `UDMCP_MEDIA_CAPTURE=true` doit être défini dans l'environnement du serveur (opt-in du propriétaire).
-- Le paquet `[media]` est installé (`opencv-python-headless`, `sounddevice`, `numpy`).
+- `UDMCP_MEDIA_CAPTURE=true` must be set in the server environment (owner opt-in).
+- The `[media]` package extra must be installed (`opencv-python-headless`, `sounddevice`, `numpy`).
 
-## Séquence recommandée
+## Recommended Sequence
 
-1. **Vérifier que le média est autorisé** : `get_access_policy` ou vérifier `UDMCP_MEDIA_CAPTURE=true`.
-2. **Découvrir les caméras** : `discover_cameras(max_index=8)`
-   - Chaque sonde peut brièvement activer la caméra. Ne pas appeler automatiquement sans demande explicite.
-3. **Capturer une image** : `capture_camera_image(camera_index=0)`
-   - Retourne une image JPEG (≤ 900 Ko) encodée en base64, en mémoire uniquement.
-   - L'image n'est pas écrite sur disque et n'est pas conservée dans l'historique.
+1. **Verify media permissions**: `get_access_policy` or check `UDMCP_MEDIA_CAPTURE=true`.
+2. **Discover cameras**: `discover_cameras(max_index=8)`
+   - Each probe may briefly activate the camera hardware. Do not call automatically without explicit user intent.
+3. **Capture a frame**: `capture_camera_image(camera_index=0)`
+   - Returns an in-memory, base64-encoded JPEG image (≤ 900 KB).
+   - The image is never written to disk and is not stored in history.
 
-## Outils MCP utilisés
+## MCP Tools Used
 
 - `discover_cameras`
 - `capture_camera_image`
 
-## Résultat attendu
+## Expected Output
 
-- Liste des caméras détectées avec `device_id` et `index`.
-- Image capturée : `mime_type: image/jpeg`, `image_base64`, taille en octets, `persisted: false`.
+- List of detected cameras with `device_id` and `index`.
+- Captured frame: `mime_type: image/jpeg`, `image_base64`, size in bytes, `persisted: false`.
 
-## Gestion des erreurs
+## Error Handling
 
 | Situation | Action |
 |-----------|--------|
-| `PermissionError` | `UDMCP_MEDIA_CAPTURE` n'est pas défini. Demander au propriétaire de l'activer localement. |
-| `ImportError` | Le paquet `[media]` n'est pas installé. Exécuter `pip install "universal-device-mcp[media]"`. |
-| Aucune caméra trouvée | Aucune caméra accessible à l'index sondé. Vérifier que la caméra est branchée et pas utilisée par une autre application. |
+| `PermissionError` | `UDMCP_MEDIA_CAPTURE` is not set. Ask the computer owner to enable it locally. |
+| `ImportError` | The `[media]` extra is not installed. Run `pip install "universal-device-mcp[media]"`. |
+| No camera found | No camera accessible at probed indices. Verify physical connection and ensure no other application is locking the camera. |
 
-## Considérations de sécurité
+## Security Considerations
 
-- Aucune caméra n'est activée automatiquement. `discover_cameras` et `capture_camera_image` requièrent un appel explicite.
-- L'image est en mémoire uniquement, jamais écrite sur disque.
-- Respecter les paramètres de confidentialité du système d'exploitation (Windows/macOS/Linux).
+- No camera is activated automatically. `discover_cameras` and `capture_camera_image` require explicit tool calls.
+- Image frames are kept strictly in memory and are never persisted to disk.
+- Respect host OS privacy and device permission settings (Windows, macOS, Linux).

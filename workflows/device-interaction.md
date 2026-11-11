@@ -1,52 +1,50 @@
-# Workflow : Interaction avec un appareil
+# Workflow: Device Interaction
 
-## Objectif
+## Objective
 
-Envoyer une opération générique à une interface d'un appareil et vérifier que l'opération a réussi.
+Send a generic operation to a device interface and verify the operation's outcome.
 
 ## Preconditions
 
-- Un `device_id` et un `interface_id` connus (obtenus via `inspect_device`).
-- La politique d'accès autorise l'opération (`get_access_policy` vérifié).
-- L'appareil est connecté (`connect_device` si nécessaire).
+- A known `device_id` and `interface_id` (obtained via `discover_devices` and `inspect_device`).
+- The local access policy authorizes the operation (`get_access_policy` checked).
+- The device is connected (`connect_device` called if needed).
 
-## Séquence recommandée
+## Recommended Sequence
 
-1. **Vérifier la politique d'accès** : `get_access_policy`
-   - Confirmer le mode (`safe`, `trusted`, `full`) et que l'opération n'est pas bloquée.
-2. **Vérifier la connexion** : `inspect_device(device_id)`
-   - Si `connected: false`, appeler `connect_device(device_id)`.
-3. **Exécuter l'opération** : `communicate_device(device_id, interface_id, operation, data_hex?, session_id?, options?)`
-   - `operation` : nom de l'opération (ex: `read`, `write`, `send`, `communicate`).
-   - `data_hex` : données en hexadécimal si nécessaire.
-   - `session_id` : réutiliser une session ouverte si l'interface le supporte.
-4. **Vérifier le résultat** : confirmer l'absence d'erreur et la cohérence des données retournées.
+1. **Check access policy**: `get_access_policy`
+   - Confirm current access mode (`safe`, `trusted`, `full`, `unrestricted`) and verify the operation is not blocked.
+2. **Verify connection**: `inspect_device(device_id)`
+   - If `connected: false`, call `connect_device(device_id)`.
+3. **Execute operation**: `communicate_device(device_id, interface_id, operation, data_hex?, session_id?, options?)`
+   - `operation`: name of the operation (e.g. `read`, `write`, `send`, `communicate`).
+   - `data_hex`: hexadecimal payload data when applicable.
+   - `session_id`: reuse an open session if supported by the interface.
+4. **Verify result**: verify absence of error and validate data integrity.
 
-## Outils MCP utilisés
+## MCP Tools Used
 
 - `get_access_policy`
 - `inspect_device`
-- `connect_device` (si nécessaire)
+- `connect_device` (if necessary)
 - `communicate_device`
-- `open_interface` / `close_interface` (si session persistante requise)
+- `open_interface` / `close_interface` (if persistent session is required)
 
-## Résultat attendu
+## Expected Output
 
-- Données retournées par l'appareil (pour une lecture).
-- Confirmation d'envoi (pour une écriture).
-- Aucun champ d'erreur dans la réponse.
+- Returned payload data from the hardware (for read operations).
+- Send acknowledgment (for write operations).
+- No error field in response payload.
 
-## Gestion des erreurs
+## Error Handling
 
 | Situation | Action |
 |-----------|--------|
-| `PermissionError` | La politique d'accès bloque l'opération. Demander à l'utilisateur de configurer une règle locale. |
-| `RuntimeError: not currently connected` | Appeler `connect_device(device_id)` puis réessayer. |
-| `TimeoutError` | L'appareil ne répond pas. Vérifier la connexion physique et relancer `inspect_device`. |
-| `ValueError` | Paramètre invalide (ex: `data_hex` mal formé). Corriger les paramètres. |
+| `PermissionError` | Local policy blocks the operation. Ask the user/owner to configure an exact local rule in `UDMCP_POLICY`. |
+| `RuntimeError: not currently connected` | Call `connect_device(device_id)` then retry. |
+| `TimeoutError` | Device is not responding. Check physical cable/connection and re-run `inspect_device`. |
+| `ValueError` | Invalid parameter (e.g. malformed `data_hex`). Correct input parameters. |
 
-## Considérations de sécurité
+## Security Considerations
 
-- Ne jamais exécuter une opération destructive (`flash`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`) : bloquée dans tous les modes.
-- Respecter `max_write_bytes` (défaut 4096 octets).
-- Pour les écritures répétées sur une même interface, envisager `open_interface` puis réutiliser la `session_id`.
+- Never execute destructive operations (`flash`, `wipe`, `format`, `delete`, `remove`, `factory_reset`, `bootloader_unlock`, `execute`) without explicit authorization. They are blocked in all safe/trusted/full modes, and require explicit one-time confirmation in `unrestricted` mode.
