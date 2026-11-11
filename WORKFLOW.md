@@ -26,6 +26,20 @@ Use this server when you need to:
 - Accessing hardware without operating system permissions (Windows, macOS, Linux remain authoritative).
 - In `unrestricted` mode, performing destructive operations without obtaining an explicit one-time approval via `authorize_destructive_operation` — the AI cannot grant this approval to itself.
 
+## 0. Agent Autonomous Workspace Setup
+
+When an AI agent is asked by the user to set up and connect Universal Device MCP:
+
+1. **Verify Python:** Confirm Python 3.11+ is installed (`python --version`).
+2. **Environment:** Create or activate a local virtual environment (`python -m venv .venv`).
+3. **Install Package:** Install dependencies and hardware extras:
+   - On Windows: `.\.venv\Scripts\python.exe -m pip install -e ".[all]"`
+   - On macOS/Linux: `./.venv/bin/python -m pip install -e ".[all]"`
+4. **Register MCP Server:** Run the built-in auto-configurator:
+   - `python -m universal_device_mcp.configure --all`
+   (or inject the `"universal-device"` server entry into your agent's MCP configuration file).
+5. **Verify:** Call `get_runtime_status()` or `discover_devices()`.
+
 ## 1. Device Discovery
 
 ### Step 1 — Check server status

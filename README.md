@@ -48,9 +48,24 @@ Broader non-advertising Wi-Fi/network scans, proprietary protocol inference, doc
 
 ## Install
 
-### Fast 1-Step Setup (Clone & Auto-Configure)
+### 1-Prompt Agentic Setup (Recommended — Zero Scripts, 100% Transparent)
 
-If you clone the repository, a single command installs everything and auto-configures your AI agent clients (Claude Desktop, Cursor, Google Antigravity, VS Code / Cline, Roo Code, Windsurf):
+Since you are using an AI agent, **you don't need to run any scripts or manually edit config files**. Simply copy and paste the prompt below directly into your AI assistant (Claude Code, Cursor, Google Antigravity, VS Code / Cline, Windsurf, Codex):
+
+```text
+Please set up and connect Universal Device MCP in this workspace:
+1. Ensure Python 3.11+ is available, create a local virtual environment, and install this repository with hardware extras (pip install -e ".[all]").
+2. Register the MCP server as "universal-device" in your MCP client configuration so you can use its tools.
+3. Test the connection by discovering all connected hardware devices and displaying their available interfaces.
+```
+
+Your agent will inspect the environment, set up the server transparently in front of you, add the configuration, and immediately report the hardware connected to your machine.
+
+---
+
+### Alternative: Fast 1-Step Setup (CLI / Scripts)
+
+If you prefer running a command yourself in your terminal:
 
 ```bash
 git clone https://github.com/anonyme-afk/Universal-Device-MCP.git
@@ -61,9 +76,11 @@ python quickstart.py
 - **Windows:** Double-click or run `setup.bat`.
 - **macOS / Linux:** Run `chmod +x setup.sh && ./setup.sh`.
 
-The script creates the `.venv` virtual environment, installs the package with hardware extras, detects installed AI clients, and updates their MCP configurations automatically. AI agents can also run `python quickstart.py` or `universal-device-configure --all` to configure their own client environment automatically.
+The script creates `.venv`, installs the package, detects installed AI clients, and updates their MCP configurations automatically.
 
-### Zero-Clone Setup via `uvx` (No repository clone needed)
+---
+
+### Alternative: Zero-Clone Setup via `uvx` (No repository clone needed)
 
 For copy-and-paste setup instructions for Claude Desktop, Claude Code, Codex, Cursor, VS Code, Cline, LM Studio, Ollama-backed models and Google Antigravity, see the [simple installation guide](docs/INSTALLATION.md).
 
